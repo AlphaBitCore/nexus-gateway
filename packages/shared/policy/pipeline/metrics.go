@@ -25,6 +25,11 @@ type Metrics struct {
 	// PipelineSkippedTotal counts hooks excluded at BuildPipeline time due to
 	// endpoint or modality mismatch. Labels: endpoint, reason, stage.
 	PipelineSkippedTotal *prometheus.CounterVec
+	// HookDegraded is 1 while a hook is failing on most of the traffic it sees
+	// over a short sliding window, 0 otherwise. It is a STATE, not a rate: the
+	// rates are already in hook_error_total and hook_timeout_total, and dividing
+	// them cannot see a window shorter than the scrape interval. Label: hook.
+	HookDegraded *prometheus.GaugeVec
 }
 
 // RegisterMetrics creates and registers compliance metrics under the given
@@ -91,6 +96,12 @@ func RegisterMetrics(reg prometheus.Registerer, namespace string) *Metrics {
 			Name:      "pipeline_skipped_total",
 			Help:      "Total hooks excluded at BuildPipeline time due to endpoint or modality mismatch",
 		}, []string{"endpoint", "reason", "stage"}),
+		HookDegraded: factory.NewGaugeVec(prometheus.GaugeOpts{
+			Namespace: namespace,
+			Subsystem: "compliance",
+			Name:      "hook_degraded",
+			Help:      "1 while a hook is failing on most executions over a short sliding window",
+		}, []string{"hook"}),
 	}
 	metricsOnce.Do(func() {
 		PipelineDuration = m.PipelineDuration
@@ -101,6 +112,7 @@ func RegisterMetrics(reg prometheus.Registerer, namespace string) *Metrics {
 		HookDecisionTotal = m.HookDecisionTotal
 		HookFailOpenTotal = m.HookFailOpenTotal
 		PipelineSkippedTotal = m.PipelineSkippedTotal
+		HookDegraded = m.HookDegraded
 	})
 	return m
 }
@@ -169,4 +181,8 @@ var (
 		Name: "noop_pipeline_skipped_total",
 		Help: "no-op; replaced by first RegisterMetrics call",
 	}, []string{"endpoint", "reason", "stage"})
+	HookDegraded *prometheus.GaugeVec = noopFactory.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "noop_hook_degraded",
+		Help: "no-op; replaced by first RegisterMetrics call",
+	}, []string{"hook"})
 )

@@ -30,10 +30,10 @@ func benchNoopPreHook(_ []byte, _ *core.HookInput) {}
 // configuration that does not ship.
 //
 // preHook turns on the raw-bytes tee (io.TeeReader into LockedByteBuffer) and
-// makes every checkpoint take a full Snapshot copy (C-22).
+// makes every checkpoint take a full Snapshot copy.
 //
 // accProvider attaches the usage accumulator the reader goroutine feeds on
-// EVERY frame, which is where C-20's per-frame validity scan plus usage and
+// EVERY frame, which is where the per-frame validity scan plus the usage and
 // choices path scans live. tlsbump installs one for all AI traffic (sse.go:
 // `if acc != nil { livePipeline.WithUsageAccumulator(acc) }`), so an arm without
 // it prices only half of the per-frame work.
@@ -45,11 +45,10 @@ type benchLiveOpts struct {
 
 // benchLiveStream drives one full stream through LivePipeline.Process — parse,
 // deliver, accumulate, checkpoint — which is the end-to-end clean-path cost of
-// an inspected SSE response on compliance-proxy and agent. This is the number
-// C-16 (per-frame unmarshal), C-20 (the other per-frame JSON passes), C-21
-// (per-frame serialization) and C-22 (snapshot copy amplification) all feed
-// into, so it is the right yardstick for ranking them by end-to-end effect
-// rather than per-function delta.
+// an inspected SSE response on compliance-proxy and agent. The per-frame
+// unmarshal, the other per-frame JSON passes, the per-frame serialization and the
+// snapshot copy amplification all feed into this one number, so it is the right
+// yardstick for ranking them by end-to-end effect rather than per-function delta.
 //
 // Accumulator Finalize is deliberately NOT called: it runs once per stream and
 // its cost is the tokenizer's, which would swamp the per-frame signal these
@@ -135,30 +134,30 @@ func BenchmarkLivePipeline_OpenAI150(b *testing.B) {
 	benchLiveStream(b, sseFixture(150), benchLiveOpts{preHook: true})
 }
 
-// BenchmarkLivePipeline_Anthropic150 is the binding-B9 shape: a wire the inline
-// extractor does not model. Before the C-17 fix this ran ZERO checkpoints; it
-// now runs the mandatory final one, so its cost is expected to be HIGHER than
-// before — that is the correctness fix being paid for, not a regression.
+// BenchmarkLivePipeline_Anthropic150 is a wire the inline extractor does not
+// model. Without the mandatory final checkpoint it would run ZERO of them, so its
+// cost here is expected to be HIGHER than an arm that skips the checkpoint
+// entirely — that is correctness being paid for, not a regression.
 func BenchmarkLivePipeline_Anthropic150(b *testing.B) {
 	benchLiveStream(b, []byte(makeAnthropicSSE(bench150Deltas()...)), benchLiveOpts{preHook: true})
 }
 
-// BenchmarkLivePipeline_OpenAI150_NoPreHook isolates how much of the cost is
-// the raw-bytes tee plus snapshot copying (C-22) versus the per-frame parsing
-// (C-16 / C-20) — the delta between this and OpenAI150 is the tee's price.
+// BenchmarkLivePipeline_OpenAI150_NoPreHook isolates how much of the cost is the
+// raw-bytes tee plus snapshot copying versus the per-frame parsing — the delta
+// between this and OpenAI150 is the tee's price.
 func BenchmarkLivePipeline_OpenAI150_NoPreHook(b *testing.B) {
 	benchLiveStream(b, sseFixture(150), benchLiveOpts{})
 }
 
 // BenchmarkLivePipeline_OpenAI1000 scales the frame count so per-frame cost
 // separates from per-stream setup, and exercises the widening checkpoint
-// cadence where the snapshot copy amplification (C-22) shows up.
+// cadence where the snapshot copy amplification shows up.
 func BenchmarkLivePipeline_OpenAI1000(b *testing.B) {
 	benchLiveStream(b, sseFixture(1000), benchLiveOpts{preHook: true})
 }
 
-// BenchmarkLivePipeline_OpenAI1000_NoPreHook is the other half of the C-22
-// measurement. The 150-frame pair showed the tee + snapshot costing +88.6 KiB for
+// BenchmarkLivePipeline_OpenAI1000_NoPreHook is the other half of the snapshot
+// measurement. The 150-frame pair shows the tee + snapshot costing +88.6 KiB for
 // only +7 allocations — few allocations, enormous bytes, which is the signature of
 // a whole-buffer copy rather than per-frame work. This arm establishes how that
 // scales: each checkpoint copies the ENTIRE accumulated buffer, and the number of
@@ -171,16 +170,15 @@ func BenchmarkLivePipeline_OpenAI1000_NoPreHook(b *testing.B) {
 
 // --- Usage-accumulator arms: the AI-traffic production shape ---
 //
-// These are the honest C-16 + C-20 yardstick. The arms above leave l.usage nil,
-// so the reader goroutine's per-frame gjson.Valid + usage path scan + choices
-// path scan never run and C-20's cost is simply absent from the number. Any
-// before/after taken against a nil-usage arm would credit a change for work it
-// never had to do.
+// These are the honest per-frame yardstick. The arms above leave l.usage nil, so
+// the reader goroutine's per-frame gjson.Valid + usage path scan + choices path
+// scan never run and that cost is simply absent from the number. Any before/after
+// taken against a nil-usage arm would credit a change for work it never had to do.
 
 // BenchmarkLivePipeline_OpenAI150_Usage is the dominant AI-traffic shape:
 // response hooks bound, provider detected, pre-hook installed. Every frame is
 // walked by BOTH the reader's openaiAccumulator.Feed and the delivery loop's
-// extractDeltaText — the duplication C-16 + C-20 exist to collapse.
+// extractDeltaText — the duplication these arms exist to price.
 func BenchmarkLivePipeline_OpenAI150_Usage(b *testing.B) {
 	benchLiveStream(b, sseFixture(150), benchLiveOpts{
 		preHook: true, accProvider: "openai", accModel: "gpt-4o",
@@ -216,8 +214,7 @@ func BenchmarkLivePipeline_OpenAI1000_Usage(b *testing.B) {
 // spin cost does not exist on a loaded proxy where every P already has a stream.
 // What DOES survive real concurrency is the per-frame channel handoff itself
 // (one send + one receive, i.e. a park/unpark pair, per SSE frame), and this arm
-// is the one that prices it honestly. Same lesson as C-15, whose Parallel arm
-// was the arm that mattered.
+// is the one that prices it honestly.
 func BenchmarkLivePipeline_OpenAI150_Usage_Parallel(b *testing.B) {
 	benchLiveStreamParallel(b, sseFixture(150), benchLiveOpts{
 		preHook: true, accProvider: "openai", accModel: "gpt-4o",

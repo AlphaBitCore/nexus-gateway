@@ -77,7 +77,13 @@ func TestContentPrescan_SoundnessDifferential(t *testing.T) {
 			body := wrapJSONNoEscape(text)
 			segments := []string{text} // the extraction of a no-escape single-message body
 
-			realHits := matchedSet(m, segments)
+			// The completeness bool is asserted here too: a truncated scan would
+			// make the soundness comparison below meaningless, because an empty
+			// realHits would no longer mean "no rule matches this text".
+			realHits, complete := matchedSet(m, segments)
+			if !complete {
+				t.Fatalf("%s / %q: the reference scan truncated; the differential cannot be evaluated", setName, text)
+			}
 			mayMatch := pre.MayMatchRaw(body)
 
 			// SOUNDNESS: a real hit must imply the prefilter said "may match".
@@ -140,13 +146,13 @@ func TestStripAnchors_IsSuperset(t *testing.T) {
 			t.Fatalf("StripAnchors(%q): %v", c.expr, err)
 		}
 		// Original matches the segment.
-		om := matchedSet(mustMatcher(t, c.expr, ""), []string{c.matchSeg})
+		om, _ := matchedSet(mustMatcher(t, c.expr, ""), []string{c.matchSeg})
 		if len(om) == 0 {
 			t.Fatalf("setup: original %q did not match %q", c.expr, c.matchSeg)
 		}
 		// Stripped matches the SAME content embedded mid-buffer (anchors gone).
 		embedded := "PREFIX_" + c.matchSeg + "_SUFFIX"
-		sm := matchedSet(mustMatcher(t, stripped, ""), []string{embedded})
+		sm, _ := matchedSet(mustMatcher(t, stripped, ""), []string{embedded})
 		if len(sm) == 0 {
 			t.Errorf("stripped %q (from %q) failed to match embedded %q — not a superset", stripped, c.expr, embedded)
 		}

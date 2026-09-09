@@ -57,8 +57,8 @@ func (st streamRelayStage) run() bool {
 		// canonical-buffer redaction on a confirmed hit. The prescan closes over
 		// the response probe's MayMatchRawContent (the cheap union prefilter); the
 		// derived lookahead sizes the flush-before-deliver boundary guard.
-		prescan, maxPattern := h.buildResponsePrescan(r.Context(), s)
-		s.sseReader = h.runModelAStream(r.Context(), s, tee, usageHolder, prescan, maxPattern)
+		prescan, maxPattern, ruleSetGen := h.buildResponsePrescan(r.Context(), s)
+		s.sseReader = h.runModelAStream(r.Context(), s, tee, usageHolder, prescan, maxPattern, ruleSetGen)
 	default:
 		// Drain the subscription (replay or live broker pump) into an
 		// io.Reader of SSE-formatted lines so the wire-consuming pipelines
@@ -128,9 +128,9 @@ func (st streamRelayStage) run() bool {
 		}
 		dispatchStreamMode(r.Context(), s.streamMode, streamDeps)
 		// Record the response-hook trace ONCE, after all checkpoints have run. This
-		// is the live audit-only path's only response-trace write — previously the
-		// streamed response hooks never entered rec.HooksPipeline, leaving
-		// response_hooks_ms NULL. finalize() is nil (no-op) when no response hook ran.
+		// is the live audit-only path's only response-trace write: without it the
+		// streamed response hooks never enter rec.HooksPipeline and
+		// response_hooks_ms stays NULL. finalize() is nil (no-op) when no response hook ran.
 		rec.HooksPipeline = appendHookTrace(rec.HooksPipeline, "response", respAcc.finalize())
 		s.sseReader = sseReader
 	}

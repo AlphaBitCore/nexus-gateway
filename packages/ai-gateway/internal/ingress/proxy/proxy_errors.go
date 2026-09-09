@@ -2,14 +2,12 @@ package proxy
 
 import (
 	"errors"
-	"fmt"
 	"net/http"
-
-	"github.com/tidwall/gjson"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/ingress/envelope"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/audit"
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic/redact"
 )
 
 // proxy_errors.go holds the gateway-generated error writers and provider-error
@@ -166,22 +164,16 @@ func openAIErrorTypeForStatus(status int) string {
 	return envelope.OpenAIErrorTypeForStatus(status)
 }
 
-// extractProviderErrorMessage extracts a human-readable error message from a
-// provider response body. Handles the common JSON envelope used by OpenAI,
-// Anthropic, and Gemini (.error.message or top-level .message). Falls back to
-// a truncated raw body, or a generic "provider returned HTTP <N>" when empty.
-func extractProviderErrorMessage(body []byte, statusCode int) string {
-	if len(body) == 0 {
-		return fmt.Sprintf("provider returned HTTP %d", statusCode)
-	}
-	if msg := gjson.GetBytes(body, "error.message").String(); msg != "" {
-		return msg
-	}
-	if msg := gjson.GetBytes(body, "message").String(); msg != "" {
-		return msg
-	}
-	if len(body) > 300 {
-		return string(body[:300]) + "..."
-	}
-	return string(body)
+// extractProviderErrorMessage is redact.ProviderErrorMessage.
+//
+// A second copy of that function here keeps
+// both defects the shared one fixes: the structured branches
+// return the provider's string unbounded (measured: 5000 bytes into a column
+// documented as capped at 300), and the raw-body fallback cuts on a BYTE
+// boundary, so a multi-byte rune straddling offset 300 produces invalid UTF-8
+// — which PostgreSQL rejects and the audit consumer treats as permanent,
+// dropping the whole event. Two copies of one rule is how that happens; the
+// wrapper stays only so the call site reads at one level of detail.
+func extractProviderErrorMessage(body []byte, statusCode int, allowRawQuote bool) string {
+	return redact.ProviderErrorMessage(body, statusCode, allowRawQuote)
 }

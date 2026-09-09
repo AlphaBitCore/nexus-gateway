@@ -23,12 +23,12 @@ func TestStorageRawBody(t *testing.T) {
 		{"block uses only the redacted copy", captured, decision.ActionBlock, redacted, redacted},
 		{"redact with no redacted copy drops the raw body", captured, decision.ActionRedact, nil, nil},
 		{"block with no redacted copy drops the raw body", captured, decision.ActionBlock, nil, nil},
-		// The empty action means APPROVE, and this case used to assert the
-		// opposite ("fails closed" → nil). That earlier reading is the defect
-		// itself: decision.Action is a string, every service's no-hooks-ran path
-		// builds a result with the decision set and the action unset, and dropping
-		// on that is how the compliance proxy came to persist a request body on
-		// every bumped row and a response body on none. Unset means "nothing asked
+		// The empty action means APPROVE. Reading it as "fails closed" → nil is
+		// the defect itself: decision.Action is a string, every service's
+		// no-hooks-ran path builds a result with the decision set and the action
+		// unset, and dropping on that is how the compliance proxy came to persist
+		// a request body on every bumped row and a response body on none. Unset
+		// means "nothing asked
 		// for this content to be withheld", not "the policy is unknown" — and
 		// capture is gated separately by the payload-capture config, so storing
 		// here cannot override a decision not to capture.

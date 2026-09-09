@@ -121,11 +121,6 @@ func run() int {
 	streamingPolicyStore := wiring.InitStreamingPolicyStore(compRes.ConfigDB, logger)
 
 	killSwitch := killswitch.NewKillSwitch(logger)
-	killSwitch.SetForceCloseFunc(func() int {
-		n := int(connManager.ActiveCount())
-		shutdownCoord.Shutdown() //nolint:errcheck
-		return n
-	})
 	exemptionStore := wiring.InitExemptionStore(logger)
 
 	hostname, _ := os.Hostname()

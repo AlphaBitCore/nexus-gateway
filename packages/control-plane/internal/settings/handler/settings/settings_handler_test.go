@@ -9,7 +9,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -19,6 +18,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/goccy/go-json"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -97,10 +98,26 @@ func adminCtx(req *http.Request, rec *httptest.ResponseRecorder, keyID, keyName 
 	return c
 }
 
-// anonCtx builds an Echo context with NO AdminAuth attached so the
-// updatedBy branch in UpdateSettings / UpdateAgentSettings falls
-// through to the empty-string default.
+// anonCtx builds an Echo context WITH an authenticated principal attached,
+// which is the only state production ever reaches — the whole admin group is
+// behind AdminAuth.
+//
+// A helper that attaches NOTHING, to make the updatedBy branch fall through to
+// the empty-string default, would put eighteen tests in this file on an arm
+// production never takes, and make a settings row that records NOBODY made the
+// change look like a supported outcome. The handlers refuse without a principal,
+// so this one supplies it; noAuthCtx below is for the arms that assert the
+// refusal.
 func anonCtx(req *http.Request, rec *httptest.ResponseRecorder) echo.Context {
+	e := echo.New()
+	c := e.NewContext(req, rec)
+	middleware.WithAdminAuth(c, &auth.AdminAuth{KeyID: "test-key", KeyName: "Test Admin"})
+	return c
+}
+
+// noAuthCtx builds an Echo context with NO principal, for the arms that
+// assert a mutating handler refuses rather than recording an empty actor.
+func noAuthCtx(req *http.Request, rec *httptest.ResponseRecorder) echo.Context {
 	e := echo.New()
 	return e.NewContext(req, rec)
 }
@@ -495,22 +512,23 @@ func TestUpdateSettings_SetMetadataFailure_500(t *testing.T) {
 	}
 }
 
-func TestUpdateSettings_AnonContext_UpdatedByIsEmpty(t *testing.T) {
-	mock, h, _ := newHandlerWithMock(t)
-	mock.ExpectQuery(`SELECT value FROM system_metadata`).WithArgs("gateway.settings").WillReturnError(pgx.ErrNoRows)
-	mock.ExpectQuery(`SELECT value FROM system_metadata`).WithArgs("gateway.settings").WillReturnError(pgx.ErrNoRows)
-	mock.ExpectExec(`INSERT INTO system_metadata`).
-		WithArgs("gateway.settings", pgxmock.AnyArg(), ""). // empty updatedBy
-		WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
-	mock.ExpectQuery(`SELECT value FROM system_metadata`).WithArgs("gateway.settings").WillReturnError(pgx.ErrNoRows)
+// A mutating settings handler reached with NO principal must refuse. Writing
+// updatedBy = "" instead produces a settings row recording that NOBODY made
+// the change, and a test asserting that pins the defect under a name reading
+// like coverage. Production never reaches this branch — the admin group is
+// behind AdminAuth — which is how it hides; refusing makes the state
+// unrepresentable, so every other test in this package must supply a
+// principal and therefore exercises the real path.
+func TestUpdateSettings_WithoutAPrincipalRefuses(t *testing.T) {
+	_, h, _ := newHandlerWithMock(t)
 
 	req := jsonReq(http.MethodPut, "/api/admin/settings", `{"logLevel":"debug"}`)
 	rec := httptest.NewRecorder()
-	if err := h.UpdateSettings(anonCtx(req, rec)); err != nil {
-		t.Fatal(err)
+	if err := h.UpdateSettings(noAuthCtx(req, rec)); err != nil {
+		t.Fatalf("handler returned a transport error: %v", err)
 	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Errorf("unmet: %v", err)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401; body=%s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -1136,25 +1154,18 @@ func TestUpdateAgentSettings_SetMetadataFailure_500(t *testing.T) {
 	}
 }
 
-func TestUpdateAgentSettings_AnonContext_UpdatedByIsEmpty(t *testing.T) {
-	mock, h, _ := newHandlerWithMock(t)
-	mock.ExpectQuery(`SELECT value FROM system_metadata`).
-		WithArgs("agent.settings").WillReturnError(pgx.ErrNoRows)
-	mock.ExpectExec(`INSERT INTO system_metadata`).
-		WithArgs("agent.settings", pgxmock.AnyArg(), ""). // empty updatedBy
-		WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
-	mock.ExpectQuery(`SELECT value FROM system_metadata`).
-		WithArgs("agent.config.version").WillReturnError(pgx.ErrNoRows)
-	mock.ExpectExec(`INSERT INTO system_metadata`).
-		WithArgs("agent.config.version", pgxmock.AnyArg(), "system").
-		WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
+// A mutating settings handler reached with NO principal must refuse — see the
+// first of these for why writing updatedBy = "" instead is the defect.
+func TestUpdateAgentSettings_WithoutAPrincipalRefuses(t *testing.T) {
+	_, h, _ := newHandlerWithMock(t)
 
-	req := jsonReq(http.MethodPut, "/api/admin/settings/device-defaults",
-		`{"logLevel":"info"}`)
+	req := jsonReq(http.MethodPut, "/api/admin/settings/device-defaults", `{}`)
 	rec := httptest.NewRecorder()
-	_ = h.UpdateAgentSettings(anonCtx(req, rec))
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Errorf("unmet: %v", err)
+	if err := h.UpdateAgentSettings(noAuthCtx(req, rec)); err != nil {
+		t.Fatalf("handler returned a transport error: %v", err)
+	}
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401; body=%s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -1463,20 +1474,18 @@ func TestUpdateDeviceAuthSettings_SetMetadataFailure_500(t *testing.T) {
 	}
 }
 
-func TestUpdateDeviceAuthSettings_AnonContext_UpdatedByIsEmpty(t *testing.T) {
-	mock, h, _ := newHandlerWithMock(t)
-	h.listIdPsFn = func(context.Context) ([]authserver_store.IdentityProvider, error) { return nil, nil }
-	mock.ExpectExec(`INSERT INTO system_metadata`).
-		WithArgs("device.auth.mode", pgxmock.AnyArg(), ""). // empty updatedBy
-		WillReturnResult(pgconn.NewCommandTag("INSERT 0 1"))
-	mock.ExpectQuery(`SELECT value FROM system_metadata`).
-		WithArgs("device.auth.mode").WillReturnError(pgx.ErrNoRows)
+// A mutating settings handler reached with NO principal must refuse — see the
+// first of these for why writing updatedBy = "" instead is the defect.
+func TestUpdateDeviceAuthSettings_WithoutAPrincipalRefuses(t *testing.T) {
+	_, h, _ := newHandlerWithMock(t)
 
 	req := jsonReq(http.MethodPut, "/api/admin/settings/device-auth", `{"mode":"mtls-only"}`)
 	rec := httptest.NewRecorder()
-	_ = h.UpdateDeviceAuthSettings(anonCtx(req, rec))
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Errorf("unmet: %v", err)
+	if err := h.UpdateDeviceAuthSettings(noAuthCtx(req, rec)); err != nil {
+		t.Fatalf("handler returned a transport error: %v", err)
+	}
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401; body=%s", rec.Code, rec.Body.String())
 	}
 }
 

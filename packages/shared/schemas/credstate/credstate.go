@@ -83,8 +83,7 @@ const (
 	CircuitFieldOpenReason = "open_reason"
 )
 
-// Enum values — keep in lockstep with the Credential CHECK constraints and
-// the OpenAPI schema in docs/users/api/openapi/admin/e41-s5-admin-credentials-state.yaml.
+// Enum values — keep in lockstep with the Credential CHECK constraints.
 
 // CircuitState values.
 const (

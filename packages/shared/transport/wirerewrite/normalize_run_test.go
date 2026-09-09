@@ -21,7 +21,6 @@ package wirerewrite
 //   - countInjectedMarkers's negative-diff clamp-to-zero path.
 
 import (
-	"github.com/goccy/go-json"
 	"regexp"
 	"strings"
 	"testing"
@@ -174,8 +173,6 @@ func TestReload_PreservesBreakerForKeyNormalizeSafeFalseRule(t *testing.T) {
 		upstreamRules: map[AdapterType][]ruleEntry{
 			AdapterOpenAI: {{rule: fakeRule, breaker: originalBreaker}},
 		},
-		providerInjectEnabled: map[string]bool{},
-		providerBoundary3:     map[string]bool{},
 	})
 
 	// Reload with empty config — bundled rules won't include "fake-upstream-only-rule",
@@ -210,7 +207,7 @@ func TestReload_DryRunAlwaysOverrideApplied(t *testing.T) {
 	eng.Reload(cfg)
 
 	body := []byte(`{"system":[{"type":"text","text":"keep cch=deadbeef; me"}]}`)
-	out, result := eng.NormalizeUpstream(AdapterAnthropic, "", body)
+	out, result := eng.NormalizeUpstream(AdapterAnthropic, body)
 	// DryRunAlways: bytes unchanged, but counts/spans are recorded.
 	if !strings.Contains(string(out), "cch=") {
 		t.Fatalf("dry-run must NOT modify upstream bytes; got %s", out)
@@ -334,260 +331,12 @@ func TestNormalizeUpstream_BreakerOpenSkipsRule(t *testing.T) {
 	}
 
 	body := []byte(`{"system":[{"type":"text","text":"keep cch=deadbeef; me"}]}`)
-	out, result := eng.NormalizeUpstream(AdapterAnthropic, "", body)
+	out, result := eng.NormalizeUpstream(AdapterAnthropic, body)
 	if !strings.Contains(string(out), "cch=") {
 		t.Fatalf("breaker-open should skip strip; cch= must remain. got %s", out)
 	}
 	if result.StripCount != 0 {
 		t.Fatalf("breaker-open StripCount must be 0, got %d", result.StripCount)
-	}
-}
-
-// TestInjectCacheMarkers_NonEphemeralNormalisedToEphemeral covers
-// rule_cache_inject.go:38-42. Any non-"ephemeral" cacheType argument is
-// normalised to {"type":"ephemeral"} to avoid Anthropic upstream 400s on
-// unsupported cache_control types.
-func TestInjectCacheMarkers_NonEphemeralNormalisedToEphemeral(t *testing.T) {
-	body := []byte(`{"system":[{"type":"text","text":"sys"}],"messages":[]}`)
-	out, err := injectCacheMarkers(body, "persistent-1h", false)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	var root map[string]any
-	if err := json.Unmarshal(out, &root); err != nil {
-		t.Fatalf("invalid JSON: %v", err)
-	}
-	sys := root["system"].([]any)
-	block := sys[0].(map[string]any)
-	cc, _ := block["cache_control"].(map[string]any)
-	if cc["type"] != "ephemeral" {
-		t.Fatalf("non-ephemeral cacheType must be coerced to ephemeral, got %v", cc)
-	}
-}
-
-// TestInjectCacheMarkers_SystemArrayAllTextBlocksAlreadyMarked covers
-// rule_cache_inject.go:74-77. When every text block in system already has
-// cache_control, blocks=nil and the body is returned unchanged.
-// This is structurally guarded by countExistingMarkers > 0 → early return,
-// so to reach the inner branch we need a SINGLE text block whose
-// cache_control is at a position where countExistingMarkers misses it.
-// countExistingMarkers walks the entire tree so it WILL find any marker.
-// Hence the only way to reach the "all text blocks already marked" inner
-// path in the same call is via a synthetic call. We accept that this
-// inner branch is logically unreachable from injectCacheMarkers' public
-// entry and document it as such — the early `countExistingMarkers > 0`
-// guard handles the case for end-to-end callers. We still cover the
-// `blocks = nil` outer assignment by feeding a system array with NO text
-// blocks (only an image block), which lands in the same inner-loop exit
-// path where stamped=false → blocks=nil.
-func TestInjectCacheMarkers_SystemArrayNoTextBlocks_BlocksNil(t *testing.T) {
-	// System array has only non-text blocks. countExistingMarkers returns 0
-	// (no cache_control anywhere). The inner loop in injectCacheMarkers will
-	// iterate but find no text block; stamped stays false and blocks=nil.
-	body := []byte(`{"system":[{"type":"image","source":{"type":"base64","data":"AAAA"}}],"messages":[]}`)
-	out, err := injectCacheMarkers(body, "ephemeral", false)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	// No marker should be added — the system field stays as-is.
-	if countInjectedMarkers(body, out) != 0 {
-		t.Fatalf("no-text-block system must not gain a marker; got out=%s", out)
-	}
-}
-
-// TestStampMessageCacheControl_ContentArrayBoundary3 covers
-// rule_cache_inject.go:131-143 — the gjson.JSON content-array branch of
-// stampMessageCacheControl. A boundary3-enabled inject with content arrays
-// on the user messages exercises the unmarshal + reverse-iterate + stamp.
-func TestStampMessageCacheControl_ContentArrayBoundary3(t *testing.T) {
-	// 3 messages: user/assistant/user. Boundary3 stamps the SECOND-TO-LAST
-	// user (= the first user, idx=0). Its content is an array of text blocks.
-	body := []byte(`{
-		"system":[{"type":"text","text":"sys"}],
-		"messages":[
-			{"role":"user","content":[{"type":"text","text":"first user a"},{"type":"text","text":"first user b"}]},
-			{"role":"assistant","content":"ack"},
-			{"role":"user","content":"latest user"}
-		]
-	}`)
-	out, err := injectCacheMarkers(body, "ephemeral", true)
-	if err != nil {
-		t.Fatalf("unexpected: %v", err)
-	}
-	// Should have 2 markers: system block + last text in first user content array.
-	n := countInjectedMarkers(body, out)
-	if n != 2 {
-		t.Fatalf("expected 2 markers (system+boundary3), got %d. body=%s", n, out)
-	}
-	var root map[string]any
-	if err := json.Unmarshal(out, &root); err != nil {
-		t.Fatalf("invalid JSON: %v", err)
-	}
-	msgs := root["messages"].([]any)
-	firstUser := msgs[0].(map[string]any)
-	content := firstUser["content"].([]any)
-	// The LAST text block in the array should be the one stamped.
-	lastBlock := content[len(content)-1].(map[string]any)
-	if _, ok := lastBlock["cache_control"]; !ok {
-		t.Fatalf("expected cache_control on last text block of first user; got %v", content)
-	}
-	// The first block must NOT be stamped (only the last text block is).
-	firstBlock := content[0].(map[string]any)
-	if _, ok := firstBlock["cache_control"]; ok {
-		t.Fatalf("only last text block should be stamped, but first also has cc: %v", content)
-	}
-}
-
-// TestStampMessageCacheControl_ContentArrayMalformedJSONReturnsOriginal
-// covers rule_cache_inject.go:132-134. The function returns the original
-// body when json.Unmarshal of the content array fails. End-to-end we
-// achieve this by giving the target user message a content field whose
-// internal type signals an array (gjson.JSON) but is structurally a JSON
-// object — Unmarshal into []map[string]any then fails.
-func TestStampMessageCacheControl_ContentArrayMalformedReturnsOriginal(t *testing.T) {
-	// content is a JSON OBJECT (not array). gjson.GetBytes sees JSON type,
-	// json.Unmarshal([]byte(raw), &[]map[string]any) errors → return body.
-	body := []byte(`{
-		"system":[{"type":"text","text":"sys"}],
-		"messages":[
-			{"role":"user","content":{"not":"an array"}},
-			{"role":"assistant","content":"ack"},
-			{"role":"user","content":"latest"}
-		]
-	}`)
-	out, err := injectCacheMarkers(body, "ephemeral", true)
-	if err != nil {
-		t.Fatalf("unexpected: %v", err)
-	}
-	// system marker should still be applied (independent path); the
-	// boundary3 stamp on messages[0] must be skipped silently.
-	var root map[string]any
-	if err := json.Unmarshal(out, &root); err != nil {
-		t.Fatalf("invalid JSON: %v", err)
-	}
-	msgs := root["messages"].([]any)
-	firstUser := msgs[0].(map[string]any)
-	content := firstUser["content"].(map[string]any)
-	if _, has := content["cache_control"]; has {
-		t.Fatalf("malformed content array must not gain cache_control; got %v", content)
-	}
-	// Total injected markers should be 1 (system only).
-	if n := countInjectedMarkers(body, out); n != 1 {
-		t.Fatalf("expected 1 marker (system only when boundary3 target malformed), got %d", n)
-	}
-}
-
-// TestStampMessageCacheControl_ContentMissingReturnsBody covers
-// rule_cache_inject.go:121-123. When the target message has no "content"
-// key at all, stampMessageCacheControl returns body unchanged.
-// We construct a message without content; gjson.Get("content") returns
-// !Exists → return body.
-func TestStampMessageCacheControl_ContentMissingReturnsBody(t *testing.T) {
-	body := []byte(`{
-		"system":[{"type":"text","text":"sys"}],
-		"messages":[
-			{"role":"user"},
-			{"role":"assistant","content":"ack"},
-			{"role":"user","content":"latest"}
-		]
-	}`)
-	out, err := injectCacheMarkers(body, "ephemeral", true)
-	if err != nil {
-		t.Fatalf("unexpected: %v", err)
-	}
-	// Only system marker should appear (boundary3 target had no content).
-	if n := countInjectedMarkers(body, out); n != 1 {
-		t.Fatalf("expected 1 marker (boundary3 target missing content), got %d", n)
-	}
-}
-
-// TestStampMessageCacheControl_ContentNonStringNonArrayReturnsBody covers
-// rule_cache_inject.go:145-146 — the default switch arm. content is a JSON
-// number → falls through to default → returns body unchanged.
-func TestStampMessageCacheControl_ContentNonStringNonArrayReturnsBody(t *testing.T) {
-	body := []byte(`{
-		"system":[{"type":"text","text":"sys"}],
-		"messages":[
-			{"role":"user","content":42},
-			{"role":"assistant","content":"ack"},
-			{"role":"user","content":"latest"}
-		]
-	}`)
-	out, err := injectCacheMarkers(body, "ephemeral", true)
-	if err != nil {
-		t.Fatalf("unexpected: %v", err)
-	}
-	// Numeric content → boundary3 stamp skipped. System marker still applied.
-	if n := countInjectedMarkers(body, out); n != 1 {
-		t.Fatalf("expected 1 marker (numeric content skipped), got %d", n)
-	}
-	var root map[string]any
-	if err := json.Unmarshal(out, &root); err != nil {
-		t.Fatalf("invalid JSON: %v", err)
-	}
-	msgs := root["messages"].([]any)
-	firstUser := msgs[0].(map[string]any)
-	// Numeric content must be preserved exactly.
-	if v, ok := firstUser["content"].(float64); !ok || v != 42 {
-		t.Fatalf("numeric content not preserved verbatim; got %v", firstUser["content"])
-	}
-}
-
-// TestCountExistingMarkers_MalformedJSONReturnsZero covers
-// rule_cache_inject.go:176-177. Garbage input must NOT panic — fail-open
-// by returning 0.
-func TestCountExistingMarkers_MalformedJSONReturnsZero(t *testing.T) {
-	if n := countExistingMarkers([]byte(`{not-json`)); n != 0 {
-		t.Fatalf("malformed JSON must return 0 markers, got %d", n)
-	}
-	if n := countExistingMarkers(nil); n != 0 {
-		t.Fatalf("nil body must return 0 markers, got %d", n)
-	}
-}
-
-// TestCountInjectedMarkers_NegativeDiffClampsToZero covers
-// rule_cache_inject.go:211-212. If somehow `modified` has fewer markers than
-// `original` (defensive case), the function clamps to 0 instead of returning
-// a negative count.
-func TestCountInjectedMarkers_NegativeDiffClampsToZero(t *testing.T) {
-	original := []byte(`{"system":[{"type":"text","text":"s","cache_control":{"type":"ephemeral"}}]}`)
-	modified := []byte(`{"system":[{"type":"text","text":"s"}]}`)
-	// original has 1 marker, modified has 0 → diff = -1 → clamp to 0.
-	if n := countInjectedMarkers(original, modified); n != 0 {
-		t.Fatalf("negative diff must clamp to 0, got %d", n)
-	}
-}
-
-// TestNormalizeUpstream_L4_Inject_BedrockWire pins the Bedrock branch of the
-// L4 injection condition (engine.go:252). Bedrock-Claude uses the identical
-// Anthropic Messages format, so the same per-Provider toggle applies.
-func TestNormalizeUpstream_L4_Inject_BedrockWire(t *testing.T) {
-	cfg := Config{
-		Providers: map[string]ProviderCacheConfig{
-			"bedrock-prov": {CacheMarkerInjectEnabled: true},
-		},
-	}
-	eng := New(nil)
-	eng.Reload(cfg)
-
-	body := []byte(`{"system":[{"type":"text","text":"sys"}],"messages":[{"role":"user","content":"hi"}]}`)
-	out, result := eng.NormalizeUpstream(AdapterBedrock, "bedrock-prov", body)
-	if !strings.Contains(string(out), `"cache_control"`) {
-		t.Fatalf("expected cache_control injected on bedrock wire, got %s", out)
-	}
-	if result.MarkersInjected == 0 {
-		t.Fatal("expected MarkersInjected>0 on bedrock wire")
-	}
-	// Audit span must reference cache-control-inject source.
-	foundInjectSpan := false
-	for _, s := range result.TransformSpans {
-		if s.Source == normalize.SourceCacheControlInject && s.Action == normalize.ActionInject {
-			foundInjectSpan = true
-			break
-		}
-	}
-	if !foundInjectSpan {
-		t.Fatalf("expected cache-control-inject span, got %+v", result.TransformSpans)
 	}
 }
 

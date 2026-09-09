@@ -14,7 +14,7 @@ import (
 // TestNormalize_WellFormedBodyStillNormalizes is the no-false-positive assertion. The guard
 // is at the single entry every tier flows through, so a bug in it would silently disable
 // normalization for real traffic — the audit row would keep writing, just without structured
-// content, which is exactly how finding C-17 hid.
+// content — the shape a normalize defect takes when it hides.
 func TestNormalize_WellFormedBodyStillNormalizes(t *testing.T) {
 	reg := BuildRegistry()
 	body := []byte(`{"model":"gpt-4o","messages":[{"role":"user","content":"path C:\\tmp and \"quoted\""}]}`)

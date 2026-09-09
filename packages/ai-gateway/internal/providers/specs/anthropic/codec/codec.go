@@ -278,11 +278,29 @@ func (Codec) EncodeRequest(endpoint typology.WireShape, canonicalBody []byte, ta
 
 	canonicalext.ScanUnsupported("anthropic", canonicalBody, anthropicSupportedRequestFields)
 
+	// Prompt caching, cross-format door. The guard reads the CANONICAL body
+	// because that is where a caller's own cache_control enters — content_parts
+	// copies it onto the blocks it builds — and it is scanned before the
+	// encode rather than after so the marker costs one map insert instead of a
+	// second pass over the encoded bytes. See prompt_cache.go.
+	promptCacheMarked := promptCacheMarkerApplies(canonicalBody, target.PromptCacheMarkers)
+	if promptCacheMarked {
+		out["cache_control"] = promptCacheMarker
+	}
+
 	body, err := json.Marshal(out)
 	if err != nil {
 		return provcore.EncodeResult{}, err
 	}
-	return provcore.EncodeResult{Body: body, ContentType: "application/json", Rewrites: rewrites}, nil
+	// The second breakpoint addresses a nested message block, so it is applied
+	// to the encoded bytes rather than to the map above.
+	if promptCacheMarked {
+		body, err = applyPromptCacheBoundary(body, target.PromptCacheBoundary)
+		if err != nil {
+			return provcore.EncodeResult{}, err
+		}
+	}
+	return provcore.EncodeResult{Body: body, ContentType: "application/json", Rewrites: rewrites, PromptCacheMarked: promptCacheMarked}, nil
 }
 
 // anthropicJSONObjectInstruction is appended to the system prompt when a

@@ -24,10 +24,9 @@ type smartCatalogRow struct {
 	ID    string   `json:"i"`
 	InPM  *float64 `json:"ip,omitempty"`
 	OutPM *float64 `json:"op,omitempty"`
-	// Features carries the non-modality capabilities. The image question used
-	// to ride here as the `vision` tag; it moved to InMod when `vision`
-	// stopped being stored, and without that move the router LLM would have
-	// been asked to match on a tag no model advertises any more.
+	// Features carries the non-modality capabilities. The image question rides
+	// in InMod, not here as a `vision` tag: `vision` is not stored, so a router
+	// LLM asked to match on it would match nothing.
 	Features []string `json:"f,omitempty"`
 	// InMod lists the input modalities BEYOND text — the whole catalog accepts
 	// text, so spelling it out on every row would spend prompt budget on a

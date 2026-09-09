@@ -4,14 +4,15 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/goccy/go-json"
 	"net/http"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/goccy/go-json"
+
+	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/httpclient"
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/alerts/client/spool"
-	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
 )
 
 // Client is the Hub-internal outbound HTTP client for alert ingress, used by
@@ -25,10 +26,8 @@ import (
 // and returns nil. Use ReplayPending to drain the spool after connectivity
 // is restored.
 //
-// Naming context: this package originally lived at packages/shared/alertclient
-// and was moved to nexus-hub/internal when it became clear that Hub is the
-// only consumer. The "client" suffix is preserved for backward compatibility
-// with the prior name; the package is **not** data-plane.
+// The "client" suffix names the outbound direction, not a data-plane client:
+// this package is Hub-internal and Hub is its only consumer.
 type Client struct {
 	cfg        Config
 	mu         sync.RWMutex

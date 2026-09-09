@@ -382,11 +382,10 @@ func TestGetTrafficEventNormalized_InlineRecompute_ReturnsComputed(t *testing.T)
 // A row the parent lookup finds but which carries no recoverable body — capture
 // was off, or the bodies have gone to retention — is unavailable, not an error.
 //
-// This test used to assert a 200 carrying the stored traffic_event_normalized
-// sidecar. That tier is gone with the table, so the assertion inverts: exactly
-// ONE query is issued (the parent lookup) and the answer is 404. The
-// single-query expectation is the part that matters — it is what would fail if
-// the sidecar SELECT were ever reintroduced.
+// There is no stored traffic_event_normalized sidecar to fall back to — the table
+// is gone — so exactly ONE query is issued (the parent lookup) and the answer is
+// 404. The single-query expectation is the part that matters: it is what fails if
+// the sidecar SELECT is ever reintroduced.
 func TestGetTrafficEventNormalized_NoRecoverableBody_Returns404(t *testing.T) {
 	h, mock := newHandlerWithMock(t)
 	mock.ExpectQuery(`COALESCE\(a.ingress_format`).

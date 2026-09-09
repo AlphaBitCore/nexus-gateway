@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/alerts/eval"
+	alerteval "github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/alerts/eval"
 )
 
 // LoginFailureFlood fires when the count of admin.login.failed audit rows

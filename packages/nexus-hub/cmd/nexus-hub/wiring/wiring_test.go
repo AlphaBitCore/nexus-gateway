@@ -206,7 +206,7 @@ func TestCloseMQAndRedis_NilMQ_NonNilRedis(t *testing.T) {
 // InitAlerts — struct assembly
 
 // testEncryptionKey is a valid 64-hex (32-byte) CREDENTIAL_ENCRYPTION_KEY for
-// exercising the FU-1 fail-closed boot path; never used outside tests.
+// exercising the fail-closed boot path; never used outside tests.
 const testEncryptionKey = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
 
 func TestInitAlerts_ConstructsAllFields(t *testing.T) {
@@ -225,7 +225,7 @@ func TestInitAlerts_ConstructsAllFields(t *testing.T) {
 	}
 }
 
-// FU-1: an EMPTY CREDENTIAL_ENCRYPTION_KEY must fail the hub closed at boot —
+// An EMPTY CREDENTIAL_ENCRYPTION_KEY must fail the hub closed at boot —
 // alert-channel secrets are never silently persisted as cleartext.
 func TestInitAlerts_UnsetEncryptionKey_FailsClosed(t *testing.T) {
 	res, err := InitAlerts(nil, "", testLogger())
@@ -237,7 +237,7 @@ func TestInitAlerts_UnsetEncryptionKey_FailsClosed(t *testing.T) {
 	}
 }
 
-// FU-1: a set-but-malformed key is also a hard boot error (a typo must never
+// A set-but-malformed key is also a hard boot error (a typo must never
 // silently downgrade to plaintext).
 func TestInitAlerts_MalformedEncryptionKey_FailsClosed(t *testing.T) {
 	res, err := InitAlerts(nil, "not-valid-hex-or-length", testLogger())

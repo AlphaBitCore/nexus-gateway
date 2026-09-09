@@ -1,0 +1,59 @@
+{
+  "model": "gpt-5-mini",
+  "input": [
+    {
+      "type": "message",
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "weather in Paris? use the tool"
+        }
+      ]
+    },
+    {
+      "id": "rs_05fd3e2716dd1473016a92d9962fa487d087b1059c2d50e289",
+      "type": "reasoning",
+      "content": [],
+      "encrypted_content": "gAAAAABqktmXDTGmQxrNz4VoIlf46NRqqxaZ2CceHwBNBf0m9mz2tTk1_d5IvN-3Zdq3nJKfcGdCetziKFt6PgMSPq0YOdnRkg9x2M3-e5YckjwaFKRy5ujat1wfVcbGqd14CzuSpEtUT1BqUBV73583kQxcHLJTtrfrixBAQg64qrZArwfIZ6gR_5_dpSxw-83opQmX-GcMbgHj_j8CKZGyNg8hwhhbq1xOfFzsQWi5FDj0aNffI8QuJ2Dsw0s7-D1kUJ9OEumaPFZBqjLzL3OMP1yW65c4vBUQLiMnNrP0JqC--0zeX1uyuG0EPSb4XqtEM5GCHW2-SES4XOW9-nyw2q2AW1pndDGUBm0x_WwFqdaKYV8Hz_j5IYtBmKzvL-9p3JGoffZPY9qRXICQp78mLmXYfq_7KDyWVW0CdtpShbHK05zRRxHM8AB9FPM_HoLfWZnURRtlqsssCeayy11UMiL0Ze-ekFwiWh37s9TZHDGfxQK3daZ9T4C1RhxfBFF6L7gDSPPRR-hhl4Ih3Vd2zcMv67BuEJe_kiRIYGbFRu7tURmXbVfn3YZ8JB2pDXZ3cdPyg6UUyHwAmM0ttW3V7Hs7GKG0fEwuOtvL77leLW6hwMzMy0xXTz7uhmcHxt2R7nGJqoACawZqM392PuvQwDSQ6tIkR_EyuNNu6NVDvrxjeVuJ_uNojvRjm5uzPRjtLtidBe_HUJL8XZASuKFWRtGJ_xWQBlA7AhQ7cAhrrqR2hDB9mGpYGsj0esF1Luz9RoT6IzUcfczBEAHnhn3_krk_rRbQTvPshHSVCwKUP9KvdoJdx9Yvady7D1OkKeEPn9Mu481FhkM005748bje3d9yl2IJspeV1s7D7uVd_mSp-W8JlTcdJTxOEZPpzZ3xkMOUtgOxR0fNmie3Z_T_3jyri489nfWpdRRpovT5GVNhc08ZeecyslslCkdft1jIuT99RZWIIurSRM9bYWlv8Wiw5QSz3KsRIFjuV4KGyeZw7T5XYWvPz-UDHUSP1wynfals0BTUsoYgybvG0gkmPaWhd-8Boa0m32N5fiTQVFC1GPo_9kEUbIRjIGZJaY1wo7BAr0pIglwmmwmxPU4KqUQ6N-iZ6Ii4eaIo_SXUTQ9KqmxOJVtizsY17IMat-tsyBYhIQZ7v__nueeWWW2K9Lsaka8yM9nIhbojOI2jqnEP8B8zFz_7NUZ68DYmBgl_ghYglBOxdEbE3U7ZCptEQy2VsQXkOzFJvH_yD7Xw3j0akA9kgoiyTLNupetZ_a2CO28j4QpLcdQaRzkkaK9LU3slk1XY-U1sTccnc3DGKQ4Hn76pJ_YBL7iOpoIjKEur6BnS4s-K-CW6YSVnJaBmKznOgxD46RKY1FGpaXke9gFsqO7c21I0k9Fd0TGAM8kQJyu4vJhQdu-uBF0Kl7lz8R7xQj4Yt__vtRuW63u2_T8YTsI4HN2UzTxQXpztQmyjuV_9G9Rtus5u952kjz43O-bOaQXURkLmM-cHdhHdK5xaCbxlkVvX2EMz-kMz3umcaBuIQdxItmUOukJNk4plr5D-PxcCldUNMykD9Rb_oqyUjsBb_bguQ5kiCzQNCPw-nqE0QEE3FVUiSm3HdkCXjglDJyp_bIb-YA-jEJm8lEQ-X_G2JIArydLy0pg2Rqs6oFcddPO1UjvLYysjW0pAQ5WkiZe9KJH0Thjne8MLX2Y9g5-nBwpQQFC8_0WRnR_w9Q9-prqDLOpmWH3tw_VqKNA7szR-XxpBp0iqxYcXfxqnBJT4hp5LrgFBy-CpuAh7QDxp80HdQuNlLtTtGOlmluu2jjWf6AISs-8bOmYxq6nJaDCLknaK0Ru2IaK0BpLEXng1jOGuD3LWQfvVJyXNx0I1wiBVS09cRlmqOdV6j5dN3Mubz6-FRAH84rYjTvtA8XXuXqRTSuAU4TpnpdybiZF64ljqGjPFpE5PRjWmCMYJVoY61IkSIdXs9N4v6EVwynTA8BnMx9TveOiFa3NTEmNVdPaDrZCGPu2nG-qkdZi3gnecsicRszSWCu2UZAVt0tDNhHmlgygXgSizvNfhk1f21JzlBttsw3vSt7mGTHC37y2o4n3t3CFIlDuX_WniKOfs2tTwqkmu9PlUC8qIec4oGKmPXR2H1YFyfHPxXB5d6bukn4T0Wg3NXmyQF5JkvtFUImop4gTeq4HoNlBqKcmAgj8ncHtgdSeKD7kTRjJ21zz3iNYDaA0xX0CIXYXSSfze8nBtQuYXohGWeQBccxG3KkGkw1QJ1rxRLTwzr6Pit3RJmkn2pzdkks9oEtL8GlbDq673uxQrouFh-l4W4H_UuUIrpPmPs81sSfwNnixbod76QBwitsvYqY9l5L52ucEXYSbGZVwDhgQc-LHPLzz0gw_nXMuBpODJ5UtZFBE32RWAlNc=",
+      "summary": []
+    },
+    {
+      "id": "fc_05fd3e2716dd1473016a92d997c12487d091368799b7eeb4ad",
+      "type": "function_call",
+      "status": "completed",
+      "arguments": "{\"city\":\"Paris\"}",
+      "call_id": "call_Is506VxkPnuyjKSGxYb4gPFU",
+      "name": "get_weather"
+    },
+    {
+      "type": "function_call_output",
+      "call_id": "call_Is506VxkPnuyjKSGxYb4gPFU",
+      "output": "{\"city\": \"Paris\", \"temp_c\": 18}"
+    }
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "name": "get_weather",
+      "description": "get weather",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "city": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "city"
+        ],
+        "additionalProperties": false
+      }
+    }
+  ],
+  "max_output_tokens": 600,
+  "store": false,
+  "reasoning": {
+    "summary": "auto"
+  }
+}

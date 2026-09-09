@@ -277,8 +277,7 @@ func TestMQRevocationChecker_StrictMode_IntrospectAllow(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called.Add(1)
 		// Introspect is a service-to-service CP call too, so the credential rides
-		// on X-RS-Token like the replay call's. Previously pinned as
-		// "Bearer rs-token".
+		// on X-RS-Token like the replay call's, not as a Bearer token.
 		if got := r.Header.Get("X-RS-Token"); got != "rs-token" {
 			t.Errorf("X-RS-Token = %q, want \"rs-token\"", got)
 		}

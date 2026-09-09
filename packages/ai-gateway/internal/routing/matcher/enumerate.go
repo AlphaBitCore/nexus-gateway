@@ -51,15 +51,15 @@ func EnumerateTerminalTargets(ctx context.Context, node core.StrategyNode, rctx 
 func enumerate(ctx context.Context, node core.StrategyNode, rctx *core.RoutingContext, lookup core.TargetLookup, path string, prob float64, depth int) []core.BranchedTarget {
 	// A child that is not a leaf is enumerated as UNREACHABLE, not walked.
 	//
-	// This walker used to descend into any node shape, because the evaluator
-	// did too. It no longer does: children are provider+model leaves, and a
-	// nested strategy resolves to nothing. Descending anyway made simulate
+	// Descending into any node shape would mirror an evaluator that does
+	// the same. It does not: children are provider+model leaves, and a
+	// nested strategy resolves to nothing. Descending anyway makes simulate
 	// report a distribution over branches the live request can never take —
 	// worse than showing nothing, because simulate is what an admin uses to
 	// check a rule before trusting it.
 	//
-	// The write boundary now refuses new nesting, so what reaches here is a row
-	// stored before that. Naming it is the point: the operator sees the branch
+	// The write boundary refuses new nesting, so what reaches here is a row
+	// stored before it did. Naming it is the point: the operator sees the branch
 	// they wrote AND that it is inert.
 	if depth > 0 && node.Type != "" && node.Type != "single" {
 		return []core.BranchedTarget{{

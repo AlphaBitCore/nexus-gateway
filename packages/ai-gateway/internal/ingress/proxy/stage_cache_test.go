@@ -15,13 +15,14 @@ import (
 	"time"
 
 	cache "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/cache/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/cache/promptcache"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/cache/semantic"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/execution/executor"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/execution/passthrough"
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
 	routingcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/storage/cacheconfig"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
-	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/wirerewrite"
 	"github.com/tidwall/gjson"
 )
 
@@ -395,16 +396,18 @@ func TestServeProxy_SemanticCacheSkip_StillInjectsProviderCacheMarkers(t *testin
 			ModelCode:       "claude-x",
 			AdapterType:     "anthropic",
 		}}}
-		// The real injection engine, configured the way prod is: the provider's
-		// marker injection is ON, which is by itself the engine's demand signal
-		// (there is no global normaliser switch any more).
-		eng := wirerewrite.New(nil)
-		eng.Reload(wirerewrite.Config{
-			Providers: map[string]wirerewrite.ProviderCacheConfig{
-				"p-anthropic": {CacheMarkerInjectEnabled: true},
+		// Prompt-cache markers ON for the Anthropic adapter family, configured
+		// the way prod is: the operator sets the adapter-family default and
+		// every provider on that family inherits it. The codec reads this
+		// through the CallTarget the cache stage builds.
+		pc := promptcache.New()
+		on := true
+		pc.SetConfig(cacheconfig.CacheConfigBlob{
+			Adapters: map[string]cacheconfig.AdapterConfig{
+				"anthropic": {MarkerInjectEnabled: &on},
 			},
 		})
-		d.Normaliser = eng
+		d.PromptCache = pc
 	})
 
 	h := NewHandler(deps).ServeProxy(Ingress{
@@ -426,6 +429,14 @@ func TestServeProxy_SemanticCacheSkip_StillInjectsProviderCacheMarkers(t *testin
 	defer mu.Unlock()
 	if !strings.Contains(string(gotBody), `"cache_control"`) {
 		t.Fatalf("the provider must receive cache_control markers even on the semantic-cache skip path; upstream got:\n%.600s", gotBody)
+	}
+	// The marker is a ROOT field: Anthropic's automatic caching places and
+	// advances the breakpoint itself, and a marker stamped on a system block
+	// instead would cache the system prompt while leaving the message turn out
+	// of the cached prefix. Asserting the location is what keeps that
+	// regression from passing as "a cache_control is present somewhere".
+	if root := gjson.GetBytes(gotBody, "cache_control.type").String(); root != "ephemeral" {
+		t.Fatalf("the marker must be the root automatic-caching field, got %q; upstream got:\n%.600s", root, gotBody)
 	}
 }
 

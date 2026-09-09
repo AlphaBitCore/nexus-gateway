@@ -1,0 +1,25 @@
+{
+  "id": "817c1e75-59c3-4a24-a475-730dfc1cc957",
+  "message": {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "text",
+        "text": "The image is entirely red. It's a solid color with no variations or other elements present."
+      }
+    ]
+  },
+  "finish_reason": "COMPLETE",
+  "usage": {
+    "billed_units": {
+      "input_tokens": 269,
+      "output_tokens": 19
+    },
+    "tokens": {
+      "input_tokens": 540,
+      "output_tokens": 20,
+      "image_tokens": 259
+    },
+    "cached_tokens": 512
+  }
+}

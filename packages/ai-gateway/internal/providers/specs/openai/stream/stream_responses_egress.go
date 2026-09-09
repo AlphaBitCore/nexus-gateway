@@ -55,6 +55,15 @@ type responsesEgressSession struct {
 	// the terminal response.completed reports finish_reason "tool_calls" (parity
 	// with the chat decoder), which a downstream re-encoder preserves.
 	sawToolCall bool
+
+	// toolNames maps output_index to the function name. This wire announces the
+	// name ONCE, on response.output_item.added, and never repeats it on the
+	// argument deltas — so a decoder that reads only the deltas produces tool
+	// calls with arguments and no name. The verbatim lane hides that (it
+	// forwards the upstream frames), but every enforcing or cross-format lane
+	// rebuilds from the canonical chunk and hands the client a tool call it
+	// cannot dispatch.
+	toolNames map[int]string
 }
 
 func (s *responsesEgressSession) Next(ctx context.Context) (provcore.Chunk, error) {
@@ -150,11 +159,20 @@ func (s *responsesEgressSession) copierChunk(ev specutil.SSEEvent) provcore.Chun
 	switch evType {
 	case "response.output_text.delta", "response.refusal.delta":
 		chunk.Delta = gjson.GetBytes(ev.Data, "delta").String()
+	case "response.output_item.added":
+		if name := gjson.GetBytes(ev.Data, "item.name").String(); name != "" {
+			if s.toolNames == nil {
+				s.toolNames = map[int]string{}
+			}
+			s.toolNames[int(gjson.GetBytes(ev.Data, "output_index").Int())] = name
+		}
 	case "response.function_call_arguments.delta":
 		s.sawToolCall = true
+		idx := int(gjson.GetBytes(ev.Data, "output_index").Int())
 		chunk.ToolCallDeltas = []provcore.ToolCallDelta{{
-			Index:     int(gjson.GetBytes(ev.Data, "output_index").Int()),
+			Index:     idx,
 			ID:        gjson.GetBytes(ev.Data, "item_id").String(),
+			Name:      s.toolNames[idx],
 			Arguments: gjson.GetBytes(ev.Data, "delta").String(),
 		}}
 	case "response.reasoning_summary_text.delta", "response.reasoning_text.delta":

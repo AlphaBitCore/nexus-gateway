@@ -91,7 +91,7 @@ func runPrepareBench(b *testing.B, body []byte, stream bool) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for range b.N {
-		if _, _, _, err := a.prepareBodyFull(req); err != nil {
+		if _, err := a.prepareBodyFull(req); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -131,7 +131,7 @@ func runQuirkPrepareBench(b *testing.B, body []byte, stream bool) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for range b.N {
-		if _, _, _, err := a.prepareBodyFull(req); err != nil {
+		if _, err := a.prepareBodyFull(req); err != nil {
 			b.Fatal(err)
 		}
 	}

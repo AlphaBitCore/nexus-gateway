@@ -169,8 +169,15 @@ func (l *Layer) loadCredentials(ctx context.Context) (map[string]store.Credentia
 			return nil, fmt.Errorf("cachelayer: scan credential: %w", err)
 		}
 		byID[c.ID] = c
-		// First enabled, active credential per provider wins (rows sorted DESC by createdAt).
-		if c.Enabled && c.Status == "active" {
+		// First USABLE credential per provider wins (rows sorted DESC by createdAt).
+		//
+		// "Usable" must mean the same thing here as in ListCredentialsForProvider
+		// below, and it did not: that list excludes SelectionWeight 0, this index
+		// did not. The resolver falls back from the list to this single-credential
+		// lookup, so draining every credential to weight 0 — which empties the
+		// list — resolved a drained credential and kept serving traffic while the
+		// console showed weight 0. The store-level pair had the identical split.
+		if c.Enabled && c.Status == "active" && c.SelectionWeight > 0 {
 			if _, exists := byProvider[c.ProviderID]; !exists {
 				byProvider[c.ProviderID] = c
 			}

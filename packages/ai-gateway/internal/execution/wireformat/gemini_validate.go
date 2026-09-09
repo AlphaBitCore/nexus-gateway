@@ -5,6 +5,8 @@ import (
 	"fmt"
 
 	"github.com/tidwall/gjson"
+
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specutil"
 )
 
 // ErrGeminiChunkShape is returned when a streamed GenerateContentResponse JSON
@@ -54,10 +56,13 @@ func ValidateGeminiGenerateContentRequest(data []byte) error {
 	if !contents.Exists() || !contents.IsArray() || len(contents.Array()) == 0 {
 		return fmt.Errorf("%w: contents must be a non-empty array", ErrGeminiRequestShape)
 	}
-	if gc := root.Get("generationConfig"); gc.Exists() && !gc.IsObject() {
+	// Both spellings on both fields: validation that only understands camelCase
+	// waves a malformed protobuf-spelled body straight through to the upstream,
+	// which is the opposite of what a shape check is for.
+	if gc := specutil.GeminiFirst(root, specutil.GeminiGenerationConfigPaths); gc.Exists() && !gc.IsObject() {
 		return fmt.Errorf("%w: generationConfig must be an object when present", ErrGeminiRequestShape)
 	}
-	if ss := root.Get("safetySettings"); ss.Exists() && !ss.IsArray() {
+	if ss := specutil.GeminiFirst(root, specutil.GeminiSafetySettingsPaths); ss.Exists() && !ss.IsArray() {
 		return fmt.Errorf("%w: safetySettings must be an array when present", ErrGeminiRequestShape)
 	}
 	return nil

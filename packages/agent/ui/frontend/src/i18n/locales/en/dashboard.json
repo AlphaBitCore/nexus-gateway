@@ -44,13 +44,14 @@
     "hero": {
       "inSync": "Configuration in sync",
       "inSyncMeta": "All policies applied as of {{at}}.",
-      "drifted": "Drifted from admin",
-      "driftedMeta": "{{behind}} version{{s}} behind. Agent will catch up on next config sync.",
       "killSwitchEngaged": "Kill switch engaged",
       "killSwitchMeta": "Interception is paused by admin. Reason: {{reason}}.",
       "diagActive": "Diagnostic mode active",
       "diagActiveMeta": "Verbose telemetry until {{until}}.",
-      "desired": "desired"
+      "outOfSync": "Out of sync with admin",
+      "outOfSyncMeta_one": "{{count}} version behind. Agent will catch up on next config sync.",
+      "outOfSyncMeta_other": "{{count}} versions behind. Agent will catch up on next config sync.",
+      "target": "target"
     },
     "kpi": {
       "domains": "Domains",
@@ -66,16 +67,12 @@
       "enforcement": "Enforcement",
       "deviceControls": "Device controls"
     },
-    "section": {
-      "count": "{{count}} item{{s}}"
-    },
     "sync": {
       "title": "Sync Status",
-      "desired": "Desired version",
-      "reported": "Reported version",
       "inSync": "In sync",
-      "drifted": "Drifted ({{behind}} version{{s}} behind)",
-      "lastReportedAt": "Last reported"
+      "lastReportedAt": "Last check-in",
+      "outOfSync_one": "Out of sync ({{count}} version behind)",
+      "outOfSync_other": "Out of sync ({{count}} versions behind)"
     },
     "interceptionDomains": {
       "title": "Interception Domains",

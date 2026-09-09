@@ -13,7 +13,7 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/store"
 )
 
-// providerColsForLayer mirrors the SELECT list in cachelayer/loaders.go
+// providerColsForLayer mirrors the SELECT list in packages/ai-gateway/internal/cache/layer/loaders.go
 // for provider queries.
 var providerColsForLayer = []string{
 	"id", "name", "displayName", "adapter_type", "baseUrl",
@@ -218,7 +218,7 @@ func TestModelStoreAdapter_GetModelByID_found(t *testing.T) {
 // TestNewResolver_nilCredMgrReturnsNil verifies nil credMgr returns nil.
 func TestNewResolver_nilCredMgrReturnsNil(t *testing.T) {
 	_, l := newLayerWithMock(t)
-	r := NewResolver(l, nil, nil)
+	r := NewResolver(l, nil, nil, nil)
 	if r != nil {
 		t.Error("expected nil resolver when credMgr=nil")
 	}

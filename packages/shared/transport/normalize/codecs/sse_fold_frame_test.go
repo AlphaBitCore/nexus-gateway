@@ -6,9 +6,9 @@ import (
 	"testing"
 )
 
-// walkSSEFrames dispatches per FRAME, not per line (findings R-14 and R-15). These pin
-// both halves, because both used to fail silently: a multi-line frame lost its Tier-1
-// decode and the body fell through to Tier 3 verbatim, so hooks saw unstructured text
+// walkSSEFrames dispatches per FRAME, not per line. These pin both halves,
+// because both fail silently: a multi-line frame loses its Tier-1 decode and
+// the body falls through to Tier 3 verbatim, so hooks see unstructured text
 // instead of messages — under-scanning on a DLP path, with no error anywhere.
 
 type sseCall struct {
@@ -27,7 +27,7 @@ func collectFrames(t *testing.T, raw string) []sseCall {
 	return got
 }
 
-// TestWalkSSEFrames_JoinsMultiLineData is R-14. A W3C-legal frame carrying its payload
+// TestWalkSSEFrames_JoinsMultiLineData. A W3C-legal frame carrying its payload
 // across two data lines must arrive as ONE callback with the lines joined by "\n" — that
 // is the only form in which the JSON parses.
 func TestWalkSSEFrames_JoinsMultiLineData(t *testing.T) {
@@ -41,9 +41,9 @@ func TestWalkSSEFrames_JoinsMultiLineData(t *testing.T) {
 	}
 }
 
-// TestWalkSSEFrames_EventNameAppliesToWholeFrame is R-15. SSE collects a frame's fields
-// and dispatches at the blank line, so an `event:` line AFTER the data line still names
-// that frame. Binding the name only to following data lines reported event=="" here.
+// TestWalkSSEFrames_EventNameAppliesToWholeFrame. SSE collects a frame's fields and
+// dispatches at the blank line, so an `event:` line AFTER the data line still names that
+// frame. Binding the name only to following data lines reports event=="" here.
 func TestWalkSSEFrames_EventNameAppliesToWholeFrame(t *testing.T) {
 	raw := "data: {\"x\":1}\n" +
 		"event: message_delta\n" +

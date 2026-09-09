@@ -1,8 +1,6 @@
 // Package providers owns the Control Plane admin API for the
 // provider/model/credential cluster: provider CRUD, model CRUD,
-// credential CRUD + rotation, reliability config. R6 sixth (and
-// largest) domain extracted from the flat handler/ package; recipe
-// in docs/_archive/2026-q2/programs/r6-handler-decomp-runbook.md.
+// credential CRUD + rotation, reliability config.
 package providers
 
 import (

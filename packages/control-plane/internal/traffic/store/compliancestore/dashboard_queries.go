@@ -72,7 +72,21 @@ func (s *Store) GetComplianceDashboard(ctx context.Context, start, end time.Time
 				EndTime:      end,
 			}
 			rollupRows, err := s.metrics.QueryRollupCascade(ctx, q)
-			if err != nil || len(rollupRows) == 0 {
+			if err != nil {
+				// A read failure must not be absorbed into the denominator.
+				// `continue` would drop this leg's counts entirely, so
+				// tlsCoverage below would be computed over the SURVIVING sources
+				// only and published as the fleet's coverage — an operator
+				// reading "98%" could not tell that half the fleet was never
+				// counted. There is no fallback for this KPI (unlike hook
+				// health), and no way to say "unknown" in a float64, so the
+				// honest answer is the error. The Trinity leg above already
+				// returns on failure; this makes the two consistent.
+				return nil, fmt.Errorf("compliance dashboard tls coverage (%s): %w", subDim, err)
+			}
+			if len(rollupRows) == 0 {
+				// Genuinely no rollup data for this source — a quiet window,
+				// not a fault. Contributing zero is correct.
 				continue
 			}
 			result := metrics.BuildResult(q, rollupRows, metrics.SelectGranularity(start, end))

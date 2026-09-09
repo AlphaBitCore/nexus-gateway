@@ -57,6 +57,26 @@ type DSARRequest struct {
 const dsarColumns = `id, subject_id, contact, type, status, notes, completed_at,
 	outcome, "createdAt", created_by, "updatedAt", updated_by`
 
+// dsarListColumns is dsarColumns MINUS outcome, and the omission is the point.
+//
+// dsar_request.outcome holds the whole persisted ACCESS export: the subject's
+// user record, IAM group memberships, virtual-key and agent traffic rows, and
+// the inline prompt/response bodies. The list projected it into every row, so
+// one call under dsar:read returned a page of complete personal data for every
+// listed subject — and the pages walk the table.
+//
+// The codebase already contained the argument against this: the fulfill handler
+// declines to copy the export into its admin-audit row because "the export holds
+// the subject's full PII (name, identity, prompt/response bodies)". That refusal
+// protects one row per fulfillment; the list handed out the same content for
+// everything on the page.
+//
+// Reading ONE named request's export stays: GET /api/admin/dsar/{id} is
+// unchanged. That is what the persisted copy is for, and it is a caller naming a
+// subject rather than sweeping all of them.
+const dsarListColumns = `id, subject_id, contact, type, status, notes, completed_at,
+	"createdAt", created_by, "updatedAt", updated_by`
+
 func scanDSAR(row pgx.Row) (*DSARRequest, error) {
 	var d DSARRequest
 	err := row.Scan(
@@ -95,7 +115,7 @@ func (store *Store) ListDSARRequests(ctx context.Context, status string, limit, 
 	}
 
 	q := fmt.Sprintf(`SELECT %s FROM dsar_request %s ORDER BY "createdAt" DESC LIMIT $%d OFFSET $%d`,
-		dsarColumns, where, n, n+1)
+		dsarListColumns, where, n, n+1)
 	args = append(args, limit, offset)
 
 	rows, err := store.pool.Query(ctx, q, args...)
@@ -106,10 +126,12 @@ func (store *Store) ListDSARRequests(ctx context.Context, status string, limit, 
 
 	requests := []DSARRequest{}
 	for rows.Next() {
+		// Outcome is left nil: the list does not select it, so it marshals as
+		// null rather than carrying the subject's export.
 		var d DSARRequest
 		if err := rows.Scan(
 			&d.ID, &d.SubjectID, &d.Contact, &d.Type, &d.Status, &d.Notes,
-			&d.CompletedAt, &d.Outcome, &d.CreatedAt, &d.CreatedBy, &d.UpdatedAt, &d.UpdatedBy,
+			&d.CompletedAt, &d.CreatedAt, &d.CreatedBy, &d.UpdatedAt, &d.UpdatedBy,
 		); err != nil {
 			return nil, 0, err
 		}
@@ -552,6 +574,10 @@ type DSARErasureResult struct {
 	// AssistantErased is the number of assistant rows (memory + session + file)
 	// deleted for the subject.
 	AssistantErased int `json:"assistantErased"`
+	// DLQEventsDeleted counts the subject's traffic_event_dlq rows removed.
+	// Those hold whole serialised events carrying the same free-text the live
+	// scrub clears, and nothing else in this transaction can reach them.
+	DLQEventsDeleted int `json:"dlqEventsDeleted"`
 	// AccessOutcomesScrubbed is the number of the subject's prior ACCESS
 	// dsar_request rows whose persisted `outcome` export (which itself holds a
 	// full copy of the subject's PII) was nulled. Without this, the correct
@@ -685,10 +711,10 @@ func (store *Store) FulfillDSARErasure(ctx context.Context, subjectID string) (*
 	}
 	result.PayloadsScrubbed = int(tagP.RowsAffected())
 
-	// Step 1b used to scrub a second copy of the same text held in the
-	// traffic_event_normalized sidecar. That table is being dropped: nothing has
-	// written to it since 2026-06-26, its only reader is gone, and the normalized
-	// projection is now computed at view time from the body step 1 just nulled.
+	// Step 1b would scrub a second copy of the same text held in the
+	// traffic_event_normalized sidecar. That table is dropped: nothing
+	// writes to it, its only reader is gone, and the normalized
+	// projection is computed at view time from the body step 1 just nulled.
 	//
 	// Erasure therefore has ONE surface instead of two, which is the stronger
 	// position — a second copy is a second thing an erasure can miss. Nothing is
@@ -698,9 +724,26 @@ func (store *Store) FulfillDSARErasure(ctx context.Context, subjectID string) (*
 	// value: zero rows is what a dropped table scrubs.
 
 	// 2. Anonymise VK traffic identifying columns (name + identity snapshot too).
+	// The free-text columns are erased alongside the identifying ones, and
+	// that is not belt-and-braces: a provider's 4xx quotes the input that
+	// offended it (OpenAI and Anthropic validation errors routinely echo the
+	// caller's own text), and a hook reason can carry a third-party hook's
+	// arbitrary string or the source IP. Erasing entity_id while leaving those
+	// behind is an erasure that reads complete and is not.
+	//
+	// error_code, model and path stay: they are categorical, not subject-
+	// derived, and the row must remain useful as a traffic record. There is
+	// deliberately no user_agent here — the adversarial review's column table
+	// listed one, and traffic.prisma has no such column at all. The hooks
+	// pipeline columns are metadata-only since the emitter stopped serialising
+	// ModifiedContent, but their per-hook reason strings come from the same
+	// place as the hook_reason columns, so they are nulled on the same basis.
 	tag1, err := tx.Exec(ctx, `
 		UPDATE traffic_event
-		SET entity_id = NULL, entity_name = NULL, identity = NULL, source_ip = NULL
+		SET entity_id = NULL, entity_name = NULL, identity = NULL, source_ip = NULL,
+		    error_reason = NULL,
+		    request_hook_reason = NULL, response_hook_reason = NULL,
+		    request_hooks_pipeline = NULL, response_hooks_pipeline = NULL
 		WHERE source = 'ai-gateway' AND entity_id = $1
 	`, subjectID)
 	if err != nil {
@@ -711,7 +754,11 @@ func (store *Store) FulfillDSARErasure(ctx context.Context, subjectID string) (*
 	// 3. Anonymise agent traffic within assignment windows.
 	tag2, err := tx.Exec(ctx, `
 		UPDATE traffic_event t
-		SET source_ip = NULL, source_process = NULL, entity_name = NULL, identity = NULL
+		SET source_ip = NULL, source_process = NULL, entity_name = NULL, identity = NULL,
+		    thing_name = NULL,
+		    error_reason = NULL,
+		    request_hook_reason = NULL, response_hook_reason = NULL,
+		    request_hooks_pipeline = NULL, response_hooks_pipeline = NULL
 		FROM "DeviceAssignment" da
 		WHERE da."userId" = $1
 		  AND t.thing_id = da."deviceId"
@@ -723,6 +770,14 @@ func (store *Store) FulfillDSARErasure(ctx context.Context, subjectID string) (*
 		return nil, fmt.Errorf("anonymise agent traffic: %w", err)
 	}
 	result.AgentAnonymised = int(tag2.RowsAffected())
+
+	// 3b. Delete the subject's dead-lettered events — see dsar_dlq.go for why
+	//     this stage decodes in Go and deletes rather than scrubs.
+	dlqDeleted, err := eraseSubjectDLQ(ctx, tx, subjectID)
+	if err != nil {
+		return nil, err
+	}
+	result.DLQEventsDeleted = dlqDeleted
 
 	// 4. Erase the subject's assistant data (transcripts, memory, files).
 	var assistantErased int64

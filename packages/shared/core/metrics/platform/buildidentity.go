@@ -8,10 +8,10 @@ import (
 // ResolveBuildIdentity answers "which build is this process" for the
 // staticInfo payload a service reports to the Hub.
 //
-// It exists because the answer used to be nothing: `staticInfo.buildSha` and
-// `buildTime` were empty on every node, so no environment could be tied to a
-// build and "is this already fixed?" had to be settled by replaying traffic
-// instead of by reading a version.
+// It exists because the answer is otherwise nothing: with `staticInfo.buildSha`
+// and `buildTime` empty, no environment can be tied to a build and "is this
+// already fixed?" has to be settled by replaying traffic instead of by reading
+// a version.
 //
 // The only input is the `-X main.buildVersion=` stamp, because that is the only
 // build-identity input the release recipe actually produces. Precedence:
@@ -53,9 +53,9 @@ func resolveBuildIdentity(
 	// Marked on BOTH paths, because the tagged one is the only path that
 	// produces a sha in prod. scripts/release/build-tarball.sh stamps
 	// `${VERSION}@$(git rev-parse HEAD)` with no cleanliness check and builds
-	// from the live repo, so a tree with uncommitted changes used to report a
-	// clean sha — sending a reader to source that is not what is running,
-	// which is the outcome this doc calls worse than an empty field.
+	// from the live repo, so an unmarked tree with uncommitted changes reports a
+	// clean sha — sending a reader to source that is not what is running, which
+	// is the outcome this doc calls worse than an empty field.
 	if sha != "" && dirty && !strings.HasSuffix(sha, "+dirty") {
 		sha += "+dirty"
 	}

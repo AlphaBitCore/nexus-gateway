@@ -6,15 +6,16 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
-	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"net/http"
 	"os"
 	"time"
 
+	"github.com/goccy/go-json"
+
 	"github.com/AlphaBitCore/nexus-gateway/packages/agent/internal/network/clienttls"
-	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
+	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/httpclient"
 )
 
 // HubEnrollRequest is the body for POST /api/internal/things/enroll on Hub.

@@ -968,3 +968,94 @@ func TestWithMetrics_LeaderGaugeSetOnStart(t *testing.T) {
 		t.Errorf("nexus_hub_scheduler_leader = %v, want 1", got)
 	}
 }
+
+// TestListJobs_MarksRowsThisProcessDidNotRegister pins the `registered` flag.
+//
+// The `job` table is the row source because it holds run history and the
+// admin's enable/disable intent, both of which outlive any one process. But
+// registration is per-process and mode-dependent: SyncDefinitions upserts only
+// what the running build registered and NEVER deletes, so a row seeded for a
+// different mode (ops-raw-partition on a MySQL deployment that registers
+// ops-raw-partition-mysql instead) survives in the list, Enabled, carrying the
+// description it was seeded with, and never runs. Without this flag the list
+// cannot say so, and the row's Trigger / Enable answer 404 -- which reads as a
+// missing record rather than a deployment fact.
+func TestListJobs_MarksRowsThisProcessDidNotRegister(t *testing.T) {
+	fake := newFakeJobStore()
+	fake.listJobsRows = []jobstore.JobWithStats{
+		{JobRecord: jobstore.JobRecord{ID: "registered-one", Name: "Registered", IntervalSec: 60, Enabled: true}},
+		{JobRecord: jobstore.JobRecord{ID: "seeded-for-another-mode", Name: "Stale", IntervalSec: 60, Enabled: true}},
+	}
+	s := New(discardLogger())
+	s.js = fake
+	s.Register(&mockJob{name: "registered-one", interval: time.Minute})
+
+	jobs, err := s.ListJobs(context.Background())
+	if err != nil {
+		t.Fatalf("ListJobs: %v", err)
+	}
+	got := map[string]bool{}
+	for _, j := range jobs {
+		got[j.ID] = j.Registered
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected both rows returned (the table is the row source), got %d", len(got))
+	}
+	if !got["registered-one"] {
+		t.Error("a job this process registered must report registered=true")
+	}
+	if got["seeded-for-another-mode"] {
+		t.Error("a row this process never registered reported registered=true; " +
+			"the list then offers Trigger/Enable that answer 404")
+	}
+}
+
+// TestListJobs_DisabledJobHasNoNextRun pins the disabled/next-run contradiction.
+//
+// SetEnabled zeroes cronEntryID when disabling, so nextRunForLocked returns nil
+// and statusFromStats used to fall through to a LastRun+Interval estimate. The
+// row then read "Disabled" beside a Next Run of tomorrow. The estimate is only
+// correct while the job is ENABLED and cron has simply not started yet.
+func TestListJobs_DisabledJobHasNoNextRun(t *testing.T) {
+	fake := newFakeJobStore()
+	lastRun := time.Now().Add(-2 * time.Minute)
+	fake.listJobsRows = []jobstore.JobWithStats{
+		{
+			JobRecord: jobstore.JobRecord{ID: "off", Name: "Off", IntervalSec: 60, Enabled: false},
+			LastRun:   &lastRun,
+		},
+		{
+			JobRecord: jobstore.JobRecord{ID: "on", Name: "On", IntervalSec: 60, Enabled: true},
+			LastRun:   &lastRun,
+		},
+	}
+	s := New(discardLogger())
+	s.js = fake
+	s.Register(&mockJob{name: "off", interval: time.Minute})
+	s.Register(&mockJob{name: "on", interval: time.Minute})
+
+	jobs, err := s.ListJobs(context.Background())
+	if err != nil {
+		t.Fatalf("ListJobs: %v", err)
+	}
+	seen := 0
+	for _, j := range jobs {
+		switch j.ID {
+		case "off":
+			seen++
+			if j.NextRun != nil {
+				t.Errorf("a disabled job reported a Next Run of %v; the row then reads "+
+					"\"Disabled\" beside a next run that will never happen", *j.NextRun)
+			}
+		case "on":
+			seen++
+			if j.NextRun == nil {
+				t.Error("an enabled job with a LastRun must still estimate a Next Run " +
+					"before cron starts; the guard must not have removed that")
+			}
+		}
+	}
+	if seen != 2 {
+		t.Fatalf("only %d of the 2 rows were examined -- the assertions above never ran", seen)
+	}
+}

@@ -20,7 +20,7 @@ import (
 // the providers that did have traffic and left that row untouched.
 //
 // The reset must run even when the window is completely empty, which is the
-// case the early return used to skip.
+// case an early return skips.
 func TestProviderHealthRollup_ClearsVerdictsWhoseWindowHasPassed(t *testing.T) {
 	for _, tc := range []struct {
 		name       string

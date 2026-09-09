@@ -9,7 +9,10 @@ import (
 
 // tryRollupRouting attempts to serve AnalyticsRouting from rollup data.
 // Returns a slice of RoutingDistribution (or nil if rollup has no data).
-func (h *Handler) tryRollupRouting(c echo.Context) []analyticsstore.RoutingDistribution {
+// Reports (served, error). A read ERROR is not "no data": the caller must
+// answer 5xx rather than an empty payload, or a broken read leg renders as
+// "no traffic" on the dashboard.
+func (h *Handler) tryRollupRouting(c echo.Context) ([]analyticsstore.RoutingDistribution, error) {
 	startP, endP := parseTimeRange(c)
 	start, end := rollupDefaultTimeRange(startP, endP, tzLoc(c))
 
@@ -20,9 +23,12 @@ func (h *Handler) tryRollupRouting(c echo.Context) []analyticsstore.RoutingDistr
 		StartTime:    start,
 		EndTime:      end,
 	}
-	result, _ := h.queryMetricsOrFallback(c.Request().Context(), q)
+	result, readErr := h.queryMetricsOrFallback(c.Request().Context(), q)
+	if readErr != nil {
+		return nil, readErr
+	}
 	if result == nil {
-		return nil
+		return nil, nil
 	}
 
 	data := make([]analyticsstore.RoutingDistribution, 0, len(result.Groups))
@@ -35,12 +41,15 @@ func (h *Handler) tryRollupRouting(c echo.Context) []analyticsstore.RoutingDistr
 			RequestCount: count,
 		})
 	}
-	return data
+	return data, nil
 }
 
 // tryRollupRoutingFallbacks attempts to serve AnalyticsRoutingFallbacks from
 // rollup data. Returns a slice of GroupByResult (or nil if rollup has no data).
-func (h *Handler) tryRollupRoutingFallbacks(c echo.Context) []analyticsstore.GroupByResult {
+// Reports (served, error). A read ERROR is not "no data": the caller must
+// answer 5xx rather than an empty payload, or a broken read leg renders as
+// "no traffic" on the dashboard.
+func (h *Handler) tryRollupRoutingFallbacks(c echo.Context) ([]analyticsstore.GroupByResult, error) {
 	startP, endP := parseTimeRange(c)
 	start, end := rollupDefaultTimeRange(startP, endP, tzLoc(c))
 
@@ -51,9 +60,12 @@ func (h *Handler) tryRollupRoutingFallbacks(c echo.Context) []analyticsstore.Gro
 		StartTime:    start,
 		EndTime:      end,
 	}
-	result, _ := h.queryMetricsOrFallback(c.Request().Context(), q)
+	result, readErr := h.queryMetricsOrFallback(c.Request().Context(), q)
+	if readErr != nil {
+		return nil, readErr
+	}
 	if result == nil {
-		return nil
+		return nil, nil
 	}
 
 	results := make([]analyticsstore.GroupByResult, 0, len(result.Groups))
@@ -64,5 +76,5 @@ func (h *Handler) tryRollupRoutingFallbacks(c echo.Context) []analyticsstore.Gro
 			RequestCount: int(g.Values[metrics.MetricRoutingRuleHit]),
 		})
 	}
-	return results
+	return results, nil
 }

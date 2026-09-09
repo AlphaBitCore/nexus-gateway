@@ -317,7 +317,7 @@ func TestTuiDeps_SwitchAndCreateEnv(t *testing.T) {
 		t.Fatal("UpdateEnv on an unknown env must error")
 	}
 	// loggedIn reflects whether the stored secret survives the URL edit (we
-	// previously set an admin key for prod — the edit must NOT wipe it).
+	// set an admin key for prod above — the edit must NOT wipe it).
 	if !loggedIn {
 		t.Fatal("UpdateEnv must preserve the existing credential — loggedIn should be true")
 	}

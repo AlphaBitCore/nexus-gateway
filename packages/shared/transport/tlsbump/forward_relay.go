@@ -7,8 +7,8 @@ import (
 
 // Relaying the upstream response to the client. Split out of forward_exchange.go, which owns the
 // exchange's setup and its upstream call; this file owns what happens to the response on the way
-// back. The seam is load-bearing for finding C-34: the stream-through arm's audit row is emitted by
-// a defer AROUND this relay rather than before it, so the row carries the upstream timings the
+// back. The seam is load-bearing: the stream-through arm's audit row is emitted by a defer
+// AROUND this relay rather than before it, so the row carries the upstream timings the
 // PhaseSink stamps off the body read.
 
 // relayResponse copies the upstream response to the client, injecting the
@@ -24,8 +24,8 @@ func (x *bumpedExchange) relayResponse(resp *http.Response) {
 		// verifiable from agent.log alone. The audit ROW, when an audit context
 		// exists, is emitted by runResponseStage — inline on the arms that buffered
 		// the body, and via serveRequest's deferred call on the stream-through arm,
-		// which must wait for this relay so the row carries the upstream timings
-		// (finding C-34). Either way the row is written even if this copy fails,
+		// which must wait for this relay so the row carries the upstream timings.
+		// Either way the row is written even if this copy fails,
 		// because the deferred call is a defer. When no audit context exists
 		// runResponseStage logged the UNAUDITED warning, so a failure here leaves a
 		// paper trail on every path.

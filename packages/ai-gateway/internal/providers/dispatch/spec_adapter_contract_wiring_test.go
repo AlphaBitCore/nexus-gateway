@@ -69,10 +69,11 @@ func TestContractAdapters_QuirksLandViaCodec(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			a := &specAdapter{spec: tc.spec, log: slog.Default()}
 
-			out, rewrites, _, err := a.prepareBodyFull(passthroughReqFor(chatBody(tc.quirkField), tc.spec.Format, tc.rewritten))
+			outPrep, err := a.prepareBodyFull(passthroughReqFor(chatBody(tc.quirkField), tc.spec.Format, tc.rewritten))
 			if err != nil {
 				t.Fatalf("PrepareBody: %v", err)
 			}
+			out, rewrites := outPrep.Body, outPrep.Rewrites
 			if strings.Contains(string(out), tc.quirkField) {
 				t.Errorf("%s: %s survived into the body the upstream rejects it in: %s", tc.name, tc.quirkField, out)
 			}
@@ -86,10 +87,11 @@ func TestContractAdapters_QuirksLandViaCodec(t *testing.T) {
 				t.Errorf("%s: rewrites %v missing %q", tc.name, rewrites, tc.wantRewrite)
 			}
 
-			out, rewrites, _, err = a.prepareBodyFull(passthroughReqFor(chatBody(tc.quirkField), tc.spec.Format, tc.inert))
+			outPrep, err = a.prepareBodyFull(passthroughReqFor(chatBody(tc.quirkField), tc.spec.Format, tc.inert))
 			if err != nil {
 				t.Fatalf("PrepareBody(inert): %v", err)
 			}
+			out, rewrites = outPrep.Body, outPrep.Rewrites
 			if !strings.Contains(string(out), tc.quirkField) {
 				t.Errorf("%s: body field %s was not preserved verbatim for %q: %s", tc.name, tc.quirkField, tc.inert, out)
 			}
@@ -109,7 +111,8 @@ func TestContractAdapters_QuirksLandViaCodec(t *testing.T) {
 func TestGpt54Boundary_ThroughRealDispatch(t *testing.T) {
 	a := &specAdapter{spec: openai.NewSpec(nil), log: slog.Default()}
 	body := chatBody(`"temperature":0,"max_tokens":128`)
-	out, rewrites, _, err := a.prepareBodyFull(passthroughReqFor(body, FormatOpenAI, "gpt-5.4"))
+	outPrep, err := a.prepareBodyFull(passthroughReqFor(body, FormatOpenAI, "gpt-5.4"))
+	out, rewrites, _ := outPrep.Body, outPrep.Rewrites, outPrep.URLOverride
 	if err != nil {
 		t.Fatalf("PrepareBody: %v", err)
 	}

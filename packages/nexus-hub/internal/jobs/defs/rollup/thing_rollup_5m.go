@@ -3,16 +3,17 @@ package rollup
 import (
 	"context"
 	"fmt"
-	"github.com/goccy/go-json"
 	"log/slog"
 	"strings"
 	"time"
+
+	"github.com/goccy/go-json"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	defs "github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/jobs/defs"
-	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/quota/rollup"
+	rollupstore "github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/quota/rollup"
 	metrics "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/instruments"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/schemas/domain"
 )
@@ -25,7 +26,7 @@ import (
 // emit time — empty rows never reach the table.
 const (
 	thingRollup5mJobID          = "thing-rollup-5m"
-	thingRollup5mJobName        = "Per-Thing Traffic Rollup (5 minute)"
+	thingRollup5mJobName        = "Per-Node Traffic Rollup (5 minute)"
 	thingRollup5mJobDescription = "Aggregates traffic_event rows with thing_id into thing_metric_rollup_5m every minute, mirroring rollup-5m but keyed by (thing_id, metric, dim, sub-dim)."
 
 	watermarkThingRollup5m = "thing-rollup-5m"

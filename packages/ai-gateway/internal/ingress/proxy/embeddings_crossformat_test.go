@@ -2,12 +2,13 @@ package proxy
 
 import (
 	"context"
-	"github.com/goccy/go-json"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/goccy/go-json"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/builtins"
 	goHooks "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"

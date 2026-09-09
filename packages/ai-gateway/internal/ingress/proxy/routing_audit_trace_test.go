@@ -13,12 +13,12 @@ import (
 // TestRecordWalk_ReconstructsTheChain is the observability gate for the
 // dispatch walk.
 //
-// Selection follows the failure now, not position, so a chain that jumped over
+// Selection follows the failure, not position, so a chain that jumped over
 // entries is either a deliberate move — an overflow reaching for the largest
 // window, a rate limit stepping off a provider — or a bug. From the plan alone
-// those look the same. The invariant that used to police this asked whether
-// every passed-over target had a named reason, and it asked it positionally, so
-// it stopped meaning anything the moment position stopped deciding.
+// those look the same. An invariant policing this by asking whether
+// every passed-over target has a named reason asks it positionally, so it
+// stopped meaning anything the moment position stopped deciding.
 //
 // What an operator has to be able to do at 3am is replay the walk: what was
 // tried, in what order, why that order, and what each one cost.

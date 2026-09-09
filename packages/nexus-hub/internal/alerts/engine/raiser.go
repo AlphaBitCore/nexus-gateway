@@ -111,7 +111,7 @@ func (r *Raiser) Raise(ctx context.Context, in RaiseInput) error {
 	// Matches both static memberships (DeviceGroupMembership, respecting
 	// expiry) and smart cache rows (device_group_membership_cache).
 	// Target-key format for device alerts is `thing:<thingID>` (see
-	// jobs/thing_offline_alerts.go); strip the prefix before matching.
+	// packages/nexus-hub/internal/jobs/defs/health/thing_offline_alerts.go); strip the prefix before matching.
 	// Non-device alerts (quota, audit, system) with a group filter set
 	// don't fire at all — interpreted as "only route this rule when it
 	// has a device target", which is the intended semantics.

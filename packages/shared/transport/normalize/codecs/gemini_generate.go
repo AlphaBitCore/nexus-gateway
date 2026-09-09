@@ -31,8 +31,8 @@ import (
 //     stream fold accumulates blocks in arrival order, coalescing only
 //     CONSECUTIVE text deltas. So the same wire content yields the same
 //     blocks in the same order whether or not it streamed — including the
-//     case where the model speaks, calls a tool, and speaks again, which
-//     per-kind grouping used to fuse into one utterance.
+//     case where the model speaks, calls a tool, and speaks again — which
+//     per-kind grouping would fuse into one utterance.
 //   - usageMetadata.{promptTokenCount, candidatesTokenCount,
 //     totalTokenCount, cachedContentTokenCount} → Usage.{Prompt,
 //     Completion, Total, CacheReadTokens}.

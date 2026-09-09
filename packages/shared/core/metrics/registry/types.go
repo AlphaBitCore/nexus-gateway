@@ -53,26 +53,30 @@ const (
 
 // DiagEvent is the WS / HTTP payload for `diag_event`.
 //
-// TraceID is a first-class typed field that carries the cross-service
-// correlation id (the X-Nexus-Request-Id header value) so a query for
-// "every diag row that belongs to trace X" hits a real column with a
-// btree index instead of probing the JSONB Attrs map. The SlogSink
-// auto-extracts the `trace_id` slog attr into this field at emit time;
-// the Hub diag writer + drain handler persist it into thing_diag_event.trace_id.
+// ExternalRequestID is a first-class typed field carrying the request id this
+// diag line belongs to, so a query for "every diag row for request X" hits a
+// real column with a btree index instead of probing the JSONB Attrs map. The
+// SlogSink auto-extracts the `external_request_id` slog attr into this field at
+// emit time; the Hub diag writer + drain handler persist it into
+// thing_diag_event.external_request_id, which joins to
+// traffic_event.external_request_id.
+//
+// It is not a trace id — traffic_event.trace_id holds the caller's own W3C
+// trace, a different value that is absent for most callers.
 type DiagEvent struct {
-	ThingID      string         `json:"thingId"`
-	OccurredAt   time.Time      `json:"occurredAt"`
-	Level        string         `json:"level"`
-	EventType    string         `json:"eventType"`
-	Source       string         `json:"source"`
-	Message      string         `json:"message"`
-	MessageHash  string         `json:"messageHash"`
-	TraceID      string         `json:"traceId,omitempty"`
-	Attrs        map[string]any `json:"attrs,omitempty"`
-	StackTrace   string         `json:"stackTrace,omitempty"`
-	RepeatCount  int            `json:"repeatCount"`
-	AgentVersion string         `json:"agentVersion,omitempty"`
-	OSInfo       map[string]any `json:"osInfo,omitempty"`
+	ThingID           string         `json:"thingId"`
+	OccurredAt        time.Time      `json:"occurredAt"`
+	Level             string         `json:"level"`
+	EventType         string         `json:"eventType"`
+	Source            string         `json:"source"`
+	Message           string         `json:"message"`
+	MessageHash       string         `json:"messageHash"`
+	ExternalRequestID string         `json:"externalRequestId,omitempty"`
+	Attrs             map[string]any `json:"attrs,omitempty"`
+	StackTrace        string         `json:"stackTrace,omitempty"`
+	RepeatCount       int            `json:"repeatCount"`
+	AgentVersion      string         `json:"agentVersion,omitempty"`
+	OSInfo            map[string]any `json:"osInfo,omitempty"`
 }
 
 // StaticInfo is the L2 static-identity payload that Things write to

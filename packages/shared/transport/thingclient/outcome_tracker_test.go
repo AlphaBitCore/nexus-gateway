@@ -3,7 +3,6 @@ package thingclient
 import (
 	"context"
 	"errors"
-	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -16,9 +15,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/goccy/go-json"
+
+	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/httpclient"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/platform"
 	opsmetrics "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/registry"
-	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
 	"github.com/coder/websocket"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"

@@ -18,7 +18,10 @@ const defaultIdentity = "compliance-proxy"
 // chain helpers (PrependVia / PrependChain) to compose multi-hop values
 // 1:1 with the via chain. See nexus-headers.md.
 const (
-	requestIDHeader  = "X-Nexus-Request-Id"
+	// The request-id header name comes from the registry rather than a local
+	// copy: it is read on the request side by traffic.ResolveRequestID, and two
+	// spellings of one name are how a rename half-lands.
+	requestIDHeader  = traffic.HeaderRequestID
 	hookHeader       = "X-Nexus-Hook"
 	modeHeader       = "X-Nexus-Mode"
 	domainRuleHeader = "X-Nexus-Domain-Rule"

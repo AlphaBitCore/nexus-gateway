@@ -14,11 +14,11 @@ import (
 // IAM grant ceiling (permission boundary).
 //
 // IAM policy authoring and the grant operations (attach-policy-to-principal,
-// attach-policy-to-group, add-group-member) previously had NO check that the
-// permissions being conferred were a subset of the CALLER's own. A principal
-// holding only a delegated `iam-policy.*` / `iam-group.*` scope could therefore
+// attach-policy-to-group, add-group-member) each need a check that the
+// permissions being conferred are a subset of the CALLER's own. Without one, a
+// principal holding only a delegated `iam-policy.*` / `iam-group.*` scope can
 // author or attach an `admin:*` policy to itself (or a group it belongs to) and
-// silently become super-admin. The fix is an AWS-style no-privilege-escalation
+// silently become super-admin. This is the AWS-style no-privilege-escalation
 // ceiling: a principal may never confer a permission it does not itself hold.
 //
 // The conferring chokepoints are guarded with ceilingBlocks below; the actual
@@ -34,10 +34,7 @@ func callerPrincipal(c echo.Context) (principalType, principalID string, ok bool
 	if aa == nil || aa.KeyID == "" {
 		return "", "", false
 	}
-	pt := aa.AuthPrincipalType
-	if pt == "admin_user" {
-		pt = "nexus_user"
-	}
+	pt, _ := cpiam.NormalisePrincipalType(aa.AuthPrincipalType)
 	return pt, aa.KeyID, true
 }
 
@@ -71,37 +68,72 @@ func (h *Handler) ceilingBlocks(c echo.Context, document cpiam.PolicyDocument) (
 	return false, nil
 }
 
-// ceilingBlocksOwner enforces the grant ceiling when minting an admin API key
-// that authenticates AS another principal. An admin API key whose
-// ownerUserId is set delegates to that owner (authn.EffectivePrincipal), so a
-// caller holding only `admin:api-key.create` could otherwise mint a key owned by
-// a super-admin and inherit super-admin authority — the ceiling never ran on
-// this path. This requires the caller to already hold every permission the owner
-// holds before the key is created.
+// ceilingBlocksPrincipal is the shared no-privilege-escalation check for any
+// operation that would hand the caller another principal's authority — as
+// opposed to conferring a named policy, which ceilingBlocks covers. It requires
+// the caller to already hold every permission the target holds.
 //
-// Fail-closed identically to ceilingBlocks: a missing IAM engine (503), an
-// evaluation error (500), or an unauthenticated request (403) blocks the mint.
-// A caller minting a key for a not-fully-covered owner is rejected with the
-// shared 403 PRIVILEGE_ESCALATION_BLOCKED envelope.
-func (h *Handler) ceilingBlocksOwner(c echo.Context, ownerType, ownerID string) (blocked bool, resp error) {
-	if h.iamEngine == nil {
-		return true, c.JSON(http.StatusServiceUnavailable, errJSON("IAM engine not available", "server_error", ""))
-	}
+// Two families of operation reach it, and they are the same problem wearing two
+// shapes. Minting an admin API key whose ownerUserId is set produces a
+// credential that authenticates AS that owner (authn.EffectivePrincipal). Setting
+// another user's local password lets the caller sign in as them at
+// /authserver/password, after which every request is evaluated under THEIR
+// policies. Either one bypasses the whole ceiling apparatus not by out-granting
+// the owner but by becoming them.
+//
+// refusal names the operation in the 403 body so an operator can tell which door
+// they hit. Fail-closed identically to ceilingBlocks: a missing IAM engine
+// (503), an evaluation error (500), or an unauthenticated request (403) blocks.
+func (h *Handler) ceilingBlocksPrincipal(c echo.Context, targetType, targetID, refusal string) (blocked bool, resp error) {
 	pt, pid, ok := callerPrincipal(c)
 	if !ok {
 		return true, c.JSON(http.StatusForbidden, errJSON("Unauthenticated", "authorization_error", ""))
 	}
-	covered, missAction, missResource, err := h.iamEngine.PrincipalCoversPrincipal(c.Request().Context(), pt, pid, ownerType, ownerID)
+	// Acting on yourself confers nothing you do not already hold, so it is
+	// permitted without consulting the engine. Checked BEFORE the engine-missing
+	// refusal on purpose: a deployment with no engine must still let an operator
+	// rotate their own credential or set their own password.
+	if pt == targetType && pid == targetID {
+		return false, nil
+	}
+	if h.iamEngine == nil {
+		return true, c.JSON(http.StatusServiceUnavailable, errJSON("IAM engine not available", "server_error", ""))
+	}
+	covered, missAction, missResource, err := h.iamEngine.PrincipalCoversPrincipal(c.Request().Context(), pt, pid, targetType, targetID)
 	if err != nil {
-		h.logger.Error("grant-ceiling (owner) evaluation failed", "error", err)
+		h.logger.Error("grant-ceiling (principal) evaluation failed", "error", err)
 		return true, c.JSON(http.StatusInternalServerError, errJSON("Failed to verify permissions", "server_error", ""))
 	}
 	if !covered {
 		return true, c.JSON(http.StatusForbidden, errJSON(
-			"Cannot mint a key for an owner whose permission you do not hold: "+missAction+" on "+missResource,
+			refusal+": "+missAction+" on "+missResource,
 			"authorization_error", "PRIVILEGE_ESCALATION_BLOCKED"))
 	}
 	return false, nil
+}
+
+// ceilingBlocksKeyOwner is the single predicate every admin-API-key MINTING
+// path shares — create, regenerate and rotate. It owns the skip conditions so
+// they cannot be spelled three ways: an unowned key delegates to nobody, and a
+// key a caller mints for themselves confers nothing they do not already hold.
+//
+// Create had this check from the day it was written; regenerate and rotate did
+// not, and both mint an equally usable plaintext credential for the SAME owner.
+// A caller holding only admin:api-key.update could therefore pick a
+// super-admin-owned key, POST /api-keys/{id}/regenerate, and read the plaintext
+// out of the 200 body. Rotate is the same defect one verb along — its successor
+// inherits the predecessor's owner.
+//
+// Adding a fourth minting path now requires deliberately NOT calling this;
+// before, it silently inherited the hole.
+func (h *Handler) ceilingBlocksKeyOwner(c echo.Context, ownerID *string) (blocked bool, resp error) {
+	if ownerID == nil || *ownerID == "" {
+		return false, nil // unowned key: authenticates as itself, delegates nothing
+	}
+	// The owner-is-the-caller skip lives in ceilingBlocksPrincipal, shared with
+	// the password path.
+	return h.ceilingBlocksPrincipal(c, "nexus_user", *ownerID,
+		"Cannot mint a key for an owner whose permission you do not hold")
 }
 
 // ceilingBlocksRaw parses a raw policy document and enforces the ceiling. A

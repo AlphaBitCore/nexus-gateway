@@ -12,6 +12,8 @@ import (
 	"fmt"
 
 	"github.com/tidwall/gjson"
+
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specutil"
 	"github.com/tidwall/sjson"
 )
 
@@ -30,10 +32,15 @@ var geminiCacheableFields = []string{"systemInstruction", "tools", "toolConfig"}
 // each empty when absent or empty. The cachedContent manager uses these to key
 // the cache and to build the create payload; centralising the field names here
 // keeps every Gemini wire-shape decision in the codec.
+// Both spellings, because Google's JSON surface accepts the protobuf field
+// names and this feature is GATED on the field's presence: reading only
+// camelCase meant a protobuf-spelled caller silently never got a cachedContent,
+// and paid full price on every repeat request with no sign that a cache was
+// meant to apply.
 func ExtractCacheableFields(body []byte) (systemInstruction, tools, toolConfig string) {
-	return rawGeminiField(body, "systemInstruction"),
-		rawGeminiField(body, "tools"),
-		rawGeminiField(body, "toolConfig")
+	return specutil.GeminiFirstRaw(body, specutil.GeminiSystemInstructionObjectPaths),
+		rawGeminiField(body, "tools"), // single word: identical in both spellings
+		specutil.GeminiFirstRaw(body, specutil.GeminiToolConfigPaths)
 }
 
 func rawGeminiField(body []byte, path string) string {

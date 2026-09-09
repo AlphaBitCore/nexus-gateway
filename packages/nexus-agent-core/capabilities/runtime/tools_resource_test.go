@@ -58,8 +58,8 @@ func TestResourceSearchTool(t *testing.T) {
 		t.Fatalf("resource_search errored: %s", res.Content)
 	}
 	// The top candidates are full executable cards: the structural identity PLUS
-	// the spec semantics (summary) the model previously never saw — the blind
-	// re-rank fix. "List virtual keys" is listVirtualKeys' OpenAPI summary.
+	// the spec semantics (summary), without which the model re-ranks blind.
+	// "List virtual keys" is listVirtualKeys' OpenAPI summary.
 	for _, want := range []string{`"cards"`, "listVirtualKeys", `"operationId"`, `"summary"`, "List virtual keys"} {
 		if !strings.Contains(res.Content, want) {
 			t.Fatalf("resource_search missing %q:\n%s", want, res.Content)

@@ -165,9 +165,9 @@ func TestCreateProvider(t *testing.T) {
 	}
 }
 
-// TestCreateProviderWithChildren_Full is the regression test for BUGS-FOUND #5:
+// TestCreateProviderWithChildren_Full pins the credential bind:
 // the credential RETURNING yields all 30 CredMetadataColumns and must bind
-// cleanly (previously the inline 14-dest scan failed). Asserts the provider,
+// cleanly — an inline 14-dest scan does not. Asserts the provider,
 // the inserted model, and the credential all come back.
 func TestCreateProviderWithChildren_Full(t *testing.T) {
 	s, m := newMock(t)
@@ -448,12 +448,12 @@ func TestListProviderHealth(t *testing.T) {
 	}
 }
 
-// The bulk provider-create path is what the admin wizard uses, and it used to
-// normalize models by itself: every type defaulted to ["text"]/["text"], so a
-// wizard-created stt model landed declaring it accepts text rather than audio,
-// and the legacy `vision` feature was stored verbatim instead of folded into
+// The bulk provider-create path is what the admin wizard uses, and it must not
+// normalize models by itself: every type would default to ["text"]/["text"], so a
+// wizard-created stt model would land declaring it accepts text rather than audio,
+// and the legacy `vision` feature be stored verbatim instead of folded into
 // the modality arrays. Both are the same defect — a second normalizer for one
-// write. It now shares modelstore.NormalizeCreateParams; this pins the values
+// write. It shares modelstore.NormalizeCreateParams; this pins the values
 // that reach the INSERT ($19 inputModalities, $20 outputModalities, $8
 // features).
 func TestCreateProviderWithChildren_NormalizesModelsLikeTheSingleCreatePath(t *testing.T) {

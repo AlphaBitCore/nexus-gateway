@@ -1893,7 +1893,7 @@ func TestHubProxyClient_DefaultAndOverride(t *testing.T) {
 func TestHubForward_NoHub(t *testing.T) {
 	h := newHandler(t, nil, nil, nil)
 	c, rec := echoCtx(http.MethodGet, "/", "", true)
-	if err := h.hubForward(c, http.MethodGet, "/api/hub/things", nil); err != nil {
+	if _, err := h.hubForward(c, http.MethodGet, "/api/hub/things", nil); err != nil {
 		t.Fatalf("err: %v", err)
 	}
 	if rec.Code != http.StatusServiceUnavailable {
@@ -1906,7 +1906,7 @@ func TestHubForward_HubUnreachable(t *testing.T) {
 	h := newHandler(t, nil, hub, nil)
 	h.hubProxyClientRef = &http.Client{Timeout: 100 * time.Millisecond}
 	c, rec := echoCtx(http.MethodGet, "/", "", true)
-	if err := h.hubForward(c, http.MethodGet, "/api/hub/things", nil); err != nil {
+	if _, err := h.hubForward(c, http.MethodGet, "/api/hub/things", nil); err != nil {
 		t.Fatalf("err: %v", err)
 	}
 	if rec.Code != http.StatusBadGateway {
@@ -1925,7 +1925,7 @@ func TestHubForward_Happy(t *testing.T) {
 	}))
 	h := newHandler(t, nil, hub, nil)
 	c, rec := echoCtx(http.MethodGet, "/api/admin/nodes", "", true)
-	if err := h.hubForward(c, http.MethodGet, "/api/hub/things", nil); err != nil {
+	if _, err := h.hubForward(c, http.MethodGet, "/api/hub/things", nil); err != nil {
 		t.Fatalf("err: %v", err)
 	}
 	if rec.Code != http.StatusOK {
@@ -1950,7 +1950,7 @@ func TestHubForward_PostBodyAndAuth(t *testing.T) {
 	}))
 	h := newHandler(t, nil, hub, nil)
 	c, rec := echoCtx(http.MethodPost, "/api/admin/test", `{"x":1}`, true)
-	if err := h.hubForward(c, http.MethodPost, "/api/hub/things", nil); err != nil {
+	if _, err := h.hubForward(c, http.MethodPost, "/api/hub/things", nil); err != nil {
 		t.Fatalf("err: %v", err)
 	}
 	if rec.Code != http.StatusOK {
@@ -1970,7 +1970,7 @@ func TestHubForward_RenameRuns(t *testing.T) {
 		return []byte(`{"renamed":true}`), nil
 	}
 	c, rec := echoCtx(http.MethodGet, "/", "", true)
-	if err := h.hubForward(c, http.MethodGet, "/api/hub/things", rename); err != nil {
+	if _, err := h.hubForward(c, http.MethodGet, "/api/hub/things", rename); err != nil {
 		t.Fatalf("err: %v", err)
 	}
 	if !called {
@@ -1989,7 +1989,7 @@ func TestHubForward_RenameError(t *testing.T) {
 	h := newHandler(t, nil, hub, nil)
 	rename := func(_ []byte) ([]byte, error) { return nil, errors.New("rename boom") }
 	c, rec := echoCtx(http.MethodGet, "/", "", true)
-	if err := h.hubForward(c, http.MethodGet, "/api/hub/things", rename); err != nil {
+	if _, err := h.hubForward(c, http.MethodGet, "/api/hub/things", rename); err != nil {
 		t.Fatalf("err: %v", err)
 	}
 	if rec.Code != http.StatusBadGateway {

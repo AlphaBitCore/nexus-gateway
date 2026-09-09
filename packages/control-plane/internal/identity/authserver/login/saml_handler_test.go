@@ -180,6 +180,65 @@ func TestSAMLACSHandler_HappyAndProvision(t *testing.T) {
 		t.Fatalf("build sp: %v", err)
 	}
 
+	// The SAML ACS had the same hole the OIDC callback did: it resolved the
+	// user from the federated row and minted an auth code without consulting
+	// account state, so a suspended employee kept signing in through SAML.
+	// The row is the production shape — status='suspended', disabledAt NULL.
+	t.Run("suspended account -> refused, no auth code", func(t *testing.T) {
+		mock, _ := pgxmock.NewPool()
+		t.Cleanup(mock.Close)
+		mock.ExpectQuery(idpRowQuery).WithArgs("idp-1").
+			WillReturnRows(samlIdPRows("idp-1", "Acme", true, true, cfg))
+		mock.MatchExpectationsInOrder(false)
+		mock.ExpectQuery(`FROM "UserFederatedIdentity"`).WithArgs("idp-1", "carol@acme.test").
+			WillReturnRows(pgxmock.NewRows([]string{
+				"id", "userId", "idpId", "externalSubject", "externalEmail", "rawClaims", "linkedAt", "lastLoginAt", "status", "disabledAt",
+			}).AddRow("fi-9", "user-9", "idp-1", "carol@acme.test", nil, []byte(`{}`), time.Now(), nil, "suspended", (*time.Time)(nil)))
+
+		pending := store.NewPendingAuthzStore()
+		t.Cleanup(pending.Close)
+		reqs := store.NewSAMLRequestStore()
+		t.Cleanup(reqs.Close)
+		authctx := "ctx-suspended"
+		pending.Put(authctx, store.PendingAuthzEntry{
+			ClientID: "cli", RedirectURI: "http://127.0.0.1/cb", State: "st", CodeChallenge: "cc",
+			IdPID: "idp-1", ExpiresAt: time.Now().Add(5 * time.Minute),
+		})
+		const reqID = "id-test-req-susp"
+		reqs.Put(authctx, reqID)
+
+		prod := &recordingAuditProducer{}
+		d := SAMLDeps{
+			IdPs: store.NewIdPStoreWithPool(mock), Federated: store.NewFederatedStoreWithPool(mock),
+			Pending: pending, AuthCodes: store.NewAuthCodeStore(5 * time.Minute), Requests: reqs, Issuer: samlIssuer,
+			Audit: audit.NewWriter(prod, "admin-audit", nil),
+		}
+		t.Cleanup(d.AuthCodes.Close)
+
+		resp := mintSignedSAMLResponse(t, kp, sp, idpEntityID, reqID, "carol@acme.test",
+			[]saml.Attribute{attr("email", "carol@acme.test")})
+		c, rec := newSAMLACSCtx(authctx, resp)
+		if err := SAMLACSHandler(d)(c); err != nil {
+			t.Fatalf("handler: %v", err)
+		}
+		if rec.Code == http.StatusFound {
+			t.Fatalf("a suspended account completed SAML login; Location=%q", rec.Header().Get("Location"))
+		}
+		if strings.Contains(rec.Header().Get("Location"), "code=") {
+			t.Fatalf("an auth code was minted for a suspended account: %q", rec.Header().Get("Location"))
+		}
+		// A refused login must not be recorded as a successful one.
+		for _, raw := range prod.enqueued {
+			var ev map[string]any
+			if err := json.Unmarshal(raw, &ev); err != nil {
+				t.Fatalf("audit unmarshal: %v", err)
+			}
+			if ev["action"] == "admin.login.succeeded" {
+				t.Fatalf("a refused SAML login emitted admin.login.succeeded")
+			}
+		}
+	})
+
 	t.Run("happy: known federated identity -> 302 with auth code", func(t *testing.T) {
 		mock, _ := pgxmock.NewPool()
 		t.Cleanup(mock.Close)
@@ -193,8 +252,8 @@ func TestSAMLACSHandler_HappyAndProvision(t *testing.T) {
 		mock.MatchExpectationsInOrder(false)
 		mock.ExpectQuery(`FROM "UserFederatedIdentity"`).WithArgs("idp-1", "alice@acme.test").
 			WillReturnRows(pgxmock.NewRows([]string{
-				"id", "userId", "idpId", "externalSubject", "externalEmail", "rawClaims", "linkedAt", "lastLoginAt",
-			}).AddRow("fi-1", "user-1", "idp-1", "alice@acme.test", nil, []byte(`{}`), time.Now(), nil))
+				"id", "userId", "idpId", "externalSubject", "externalEmail", "rawClaims", "linkedAt", "lastLoginAt", "status", "disabledAt",
+			}).AddRow("fi-1", "user-1", "idp-1", "alice@acme.test", nil, []byte(`{}`), time.Now(), nil, "active", (*time.Time)(nil)))
 
 		pending := store.NewPendingAuthzStore()
 		t.Cleanup(pending.Close)

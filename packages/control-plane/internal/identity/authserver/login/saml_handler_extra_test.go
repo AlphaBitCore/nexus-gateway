@@ -33,7 +33,7 @@ func TestResolveOrProvision(t *testing.T) {
 	t.Run("not found + JIT disabled -> user_not_provisioned", func(t *testing.T) {
 		mock, _ := pgxmock.NewPool()
 		t.Cleanup(mock.Close)
-		mock.ExpectQuery(findQ).WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).WillReturnRows(pgxmock.NewRows([]string{"id", "userId", "idpId", "externalSubject", "externalEmail", "rawClaims", "linkedAt", "lastLoginAt"}))
+		mock.ExpectQuery(findQ).WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).WillReturnRows(pgxmock.NewRows([]string{"id", "userId", "idpId", "externalSubject", "externalEmail", "rawClaims", "linkedAt", "lastLoginAt", "status", "disabledAt"}))
 		d := SAMLDeps{Federated: store.NewFederatedStoreWithPool(mock)}
 		_, errStr := d.resolveOrProvision(context.Background(), idp(false), "x", "", "x@y", nil)
 		if errStr != "user_not_provisioned" {
@@ -44,7 +44,7 @@ func TestResolveOrProvision(t *testing.T) {
 	t.Run("not found + JIT enabled + provision fails -> internal", func(t *testing.T) {
 		mock, _ := pgxmock.NewPool()
 		t.Cleanup(mock.Close)
-		mock.ExpectQuery(findQ).WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).WillReturnRows(pgxmock.NewRows([]string{"id", "userId", "idpId", "externalSubject", "externalEmail", "rawClaims", "linkedAt", "lastLoginAt"}))
+		mock.ExpectQuery(findQ).WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).WillReturnRows(pgxmock.NewRows([]string{"id", "userId", "idpId", "externalSubject", "externalEmail", "rawClaims", "linkedAt", "lastLoginAt", "status", "disabledAt"}))
 		mock.ExpectBegin().WillReturnError(context.DeadlineExceeded)
 		d := SAMLDeps{Federated: store.NewFederatedStoreWithPool(mock)}
 		_, errStr := d.resolveOrProvision(context.Background(), idp(true), "x", "", "x@y", nil)
@@ -56,7 +56,7 @@ func TestResolveOrProvision(t *testing.T) {
 	t.Run("not found + JIT enabled + provision succeeds -> user id", func(t *testing.T) {
 		mock, _ := pgxmock.NewPool()
 		t.Cleanup(mock.Close)
-		mock.ExpectQuery(findQ).WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).WillReturnRows(pgxmock.NewRows([]string{"id", "userId", "idpId", "externalSubject", "externalEmail", "rawClaims", "linkedAt", "lastLoginAt"}))
+		mock.ExpectQuery(findQ).WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg()).WillReturnRows(pgxmock.NewRows([]string{"id", "userId", "idpId", "externalSubject", "externalEmail", "rawClaims", "linkedAt", "lastLoginAt", "status", "disabledAt"}))
 		mock.ExpectBegin()
 		mock.ExpectQuery(`SELECT id FROM "Organization"`).
 			WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow("org-1"))

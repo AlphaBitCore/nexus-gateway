@@ -19,9 +19,14 @@ func TestAcceptHeaders_CarriesEveryGatewayReadHeader(t *testing.T) {
 		"x-api-key",
 		"x-goog-api-key",
 		"api-key",
-		// Correlation.
+		// Correlation. traceparent's read site is the OTel propagator rather
+		// than a gateway handler, but it belongs here for the same reason as
+		// the rest: this slice seeds Access-Control-Allow-Headers, and a
+		// browser caller whose traceparent is rejected at preflight looks
+		// exactly like a caller who runs no tracing at all.
 		"X-Nexus-Request-Id",
 		"X-Request-Id",
+		"traceparent",
 		"X-Nexus-End-User-Id",
 		"X-Nexus-Session-Id",
 		"X-Nexus-Client-Tags",

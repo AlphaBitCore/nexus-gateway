@@ -18,6 +18,7 @@ import (
 	"errors"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/httperr"
 	"log/slog"
+	"math"
 	"net/http"
 	"strings"
 	"time"
@@ -36,6 +37,29 @@ const (
 	thingTypeComplianceProxy = "compliance-proxy"
 	thingTypeAgent           = "agent"
 )
+
+// maxExemptionMinutes is the longest compliance bypass this service will grant,
+// in minutes — 7 days.
+//
+// The admin grant path has enforced it since it was written. The employee
+// REQUEST path did not: `CreateRequest` read `durationMinutes` off the body with
+// no bound at all, and approval computes `expires_at` from that stored number,
+// so a routine approve click could mint a decade-long bypass for one source IP ×
+// target host.
+//
+// The console cannot reach that today — its duration control is a fixed Select
+// whose largest option is 10080 — so the exposure is the API itself, which is a
+// documented, IAM-gated surface any client can call. The endpoint is the
+// contract, not the one dialog that happens to call it; it has to refuse on its
+// own terms.
+//
+// The ceiling is enforced at BOTH ends now: at submit, so a request that cannot
+// be approved is never created, and at approve, because rows created before this
+// change are still in the table and approval is the moment the bypass becomes
+// real. An over-long legacy row is refused rather than quietly shortened — the
+// approver sees the number they are approving, and silently granting something
+// other than what is on screen is the failure this is here to prevent.
+const maxExemptionMinutes = 7 * 24 * 60
 
 // DataLayer is the store seam for exemption requests and durable
 // grants. *store.DB satisfies it in production; unit tests inject a
@@ -141,7 +165,7 @@ func (h *Handler) PostGrant(c echo.Context) error {
 	if req.SourceIP == "" || req.TargetHost == "" {
 		return c.JSON(http.StatusBadRequest, errJSON("sourceIP and targetHost are required", "validation_error", "VALIDATION_ERROR"))
 	}
-	if req.DurationMinutes <= 0 || req.DurationMinutes > 7*24*60 {
+	if req.DurationMinutes <= 0 || req.DurationMinutes > maxExemptionMinutes {
 		return c.JSON(http.StatusBadRequest, errJSON("durationMinutes must be in (0, 10080]", "validation_error", "VALIDATION_ERROR"))
 	}
 	if len(req.Reason) < 4 || len(req.Reason) > 500 {
@@ -313,6 +337,13 @@ func (h *Handler) ApproveRequest(c echo.Context) error {
 	if reqRow.Status != "PENDING" {
 		return c.JSON(http.StatusConflict, errJSON("Exemption request is not pending", "conflict", "CONFLICT"))
 	}
+	// Rows submitted before the ceiling existed still carry whatever duration
+	// they were sent with, and this is where that number becomes a live bypass.
+	if reqRow.DurationMinutes <= 0 || reqRow.DurationMinutes > maxExemptionMinutes {
+		return c.JSON(http.StatusUnprocessableEntity, errJSON(
+			"Exemption request duration is outside the permitted range (0, 10080] minutes; ask the requester to resubmit",
+			"validation_error", "DURATION_OUT_OF_RANGE"))
+	}
 
 	g, err := ds.ApproveExemptionRequestWithGrant(ctx, id, a.UserID, a.Name)
 	if err != nil {
@@ -391,9 +422,15 @@ func (h *Handler) CreateRequest(c echo.Context) error {
 	if txID == "" || srcIP == "" || targetHost == "" || reason == "" {
 		return c.JSON(http.StatusBadRequest, errJSON("transactionId, sourceIp, targetHost, and reason are required", "validation_error", ""))
 	}
+	// Same ceiling the admin grant path applies. A non-integer is refused rather
+	// than truncated: `int(durMin)` turns 10080.9 into 10080 and 0.5 into
+	// 0, so the value persisted is not the value submitted.
 	durMin := 240.0
 	if v, ok := body["durationMinutes"].(float64); ok {
 		durMin = v
+	}
+	if durMin != math.Trunc(durMin) || durMin <= 0 || durMin > maxExemptionMinutes {
+		return c.JSON(http.StatusBadRequest, errJSON("durationMinutes must be a whole number in (0, 10080]", "validation_error", "VALIDATION_ERROR"))
 	}
 	requestedBy := "employee"
 	if v, ok := body["requestedBy"].(string); ok {

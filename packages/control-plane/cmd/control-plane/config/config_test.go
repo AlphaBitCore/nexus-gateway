@@ -82,8 +82,8 @@ func setRequiredEnvBaseline(t *testing.T) {
 // TestLoad_HMACSecret_RequiredFailClosed is the regression guard:
 // validate() hard-fails when ADMIN_KEY_HMAC_SECRET is unset, so an operator
 // who forgets it can never boot a Control Plane that would otherwise hash every
-// admin key + VK under an empty secret. Previously the only gate read the env var
-// directly in the bootstrap layer; the requirement now lives in config.validate()
+// admin key + VK under an empty secret. A gate that reads the env var
+// directly in the bootstrap layer misses it; the requirement lives in config.validate()
 // against the custody-resolved field.
 func TestLoad_HMACSecret_RequiredFailClosed(t *testing.T) {
 	clearAllEnv(t)

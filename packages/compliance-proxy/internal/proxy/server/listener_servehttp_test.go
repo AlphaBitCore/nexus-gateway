@@ -154,35 +154,6 @@ func TestCategorizeAccessError_AllBranches(t *testing.T) {
 	}
 }
 
-// SetStreamingTuning + SetOnboardingEnabled — direct API tests
-
-func TestSetStreamingTuning_FullAndPartial(t *testing.T) {
-	t.Parallel()
-	p := &ProxyServer{}
-	p.streamingTuning.Store(&streamingTuningSnapshot{PerHookTimeout: 2 * time.Second, TotalTimeout: 5 * time.Second})
-
-	// Full update.
-	p.SetStreamingTuning(7*time.Second, 30*time.Second)
-	cur := p.streamingTuning.Load()
-	if cur.PerHookTimeout != 7*time.Second || cur.TotalTimeout != 30*time.Second {
-		t.Fatalf("timeouts = (%v,%v), want (7s,30s)", cur.PerHookTimeout, cur.TotalTimeout)
-	}
-
-	// Zero — must NOT clobber existing.
-	p.SetStreamingTuning(0, 0)
-	cur = p.streamingTuning.Load()
-	if cur.PerHookTimeout != 7*time.Second || cur.TotalTimeout != 30*time.Second {
-		t.Fatalf("partial-zero must preserve prior values, got %+v", cur)
-	}
-
-	// Partial — only PerHookTimeout.
-	p.SetStreamingTuning(11*time.Second, 0)
-	cur = p.streamingTuning.Load()
-	if cur.PerHookTimeout != 11*time.Second || cur.TotalTimeout != 30*time.Second {
-		t.Fatalf("partial-perHook failed, got %+v", cur)
-	}
-}
-
 // TestStreamingPolicyStore_AtomicSwap locks the Store-based
 // hot-swap path: the configdispatch handler routes admin Hub pushes
 // through Store.ApplyShadowState, and the ProxyServer reads the live
@@ -272,7 +243,7 @@ func TestNewProxyServer_DefaultsAndFullConfig(t *testing.T) {
 	if ps.idleTimeout != 300*time.Second {
 		t.Fatalf("idleTimeout = %v, want 300s default", ps.idleTimeout)
 	}
-	if got := ps.streamingTuning.Load(); got == nil || got.PerHookTimeout != 1*time.Second {
+	if got := ps.streamingTuning; got.PerHookTimeout != 1*time.Second {
 		t.Fatalf("streamingTuning snapshot = %+v, want PerHookTimeout=1s", got)
 	}
 	if !ps.onboardingEnabled.Load() {

@@ -50,6 +50,11 @@ func TestRegisterAdminAgentDeviceRoutes_MountsAll(t *testing.T) {
 		"POST /api/admin/agent-devices/:id/unenroll",
 		"POST /api/admin/agent-devices/:id/force-refresh",
 		"PUT /api/admin/agent-devices/:id/tags",
+		// Adopted from RegisterFleetRoutes, where they were gated by the plain
+		// middleware — which fails OPEN for a group-scoped policy.
+		"GET /api/admin/agent-devices/:id/audit",
+		"GET /api/admin/agent-devices/:id/config",
+		"GET /api/admin/agent-devices/:id/timeline",
 	}
 	seen := map[string]bool{}
 	for _, r := range e.Routes() {

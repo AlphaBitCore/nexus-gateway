@@ -3,7 +3,7 @@ package canonicalbridge
 import (
 	"testing"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/builtins"
+	provbuiltins "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/builtins"
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 )

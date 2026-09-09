@@ -26,7 +26,7 @@ func TestStageAction_EmptyActionApproves_SoTheBodyIsNotSilentlyDropped(t *testin
 
 	// stageAction derives the action from the DECISION when the producer left it
 	// unset. For this result — decision Approve, no hooks ran — that is approve,
-	// which is the same outcome the empty action used to reach through the gate.
+	// which is the same outcome the empty action reaches through the gate.
 	// The derivation exists for the decisions where the two differ: a hand-built
 	// RejectHard with no action must be governed as a block, not as "nothing asked
 	// for redaction" (see TestStageAction_DerivesTheActionFromTheDecision).

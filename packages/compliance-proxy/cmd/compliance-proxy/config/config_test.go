@@ -29,6 +29,11 @@ upstream:
   idleConnTimeout: "90s"
   dialTimeout: "10s"
 limits:
+  # requestBodyLimit and responseBodyLimit are gone from the struct — nothing
+  # ever enforced them. They stay in this fixture on purpose: the decoder is
+  # plain yaml.Unmarshal with no KnownFields, so an operator's existing config
+  # must keep loading, and this is what proves it. Removing them here would
+  # quietly retire that guarantee.
   requestBodyLimit: "10MB"
   responseBodyLimit: "10MB"
   sseBufferLimit: "8MB"
@@ -202,7 +207,7 @@ ca:
   certPath: "/ca.crt"
   keyPath: "/ca.key"
 limits:
-  requestBodyLimit: "abc"
+  sseBufferLimit: "abc"
 `
 	_, err := Load(writeTempYAML(t, yaml))
 	if err == nil {
@@ -327,6 +332,12 @@ func TestLoad_EnvOverrides(t *testing.T) {
 // body-size limits. Without it, a zero value would only fail the
 // regex check (which it doesn't — "0" parses cleanly to 0 bytes) and
 // the proxy would start with an unenforceable limit.
+//
+// The vehicle moved from requestBodyLimit to sseBufferLimit when the former
+// was deleted: nothing enforced it, so "the proxy would start with an
+// unenforceable limit" was true of every value, not just zero. It is a real
+// statement now — zero would reach streaming.LiveConfig, where <= 0 means
+// "use the 8 MB package default", silently discarding what the operator set.
 func TestLoad_NegativeBodySize(t *testing.T) {
 	setRequiredEnvBaseline(t)
 	yaml := `
@@ -336,7 +347,7 @@ ca:
   certPath: "/ca.crt"
   keyPath: "/ca.key"
 limits:
-  requestBodyLimit: "0B"
+  sseBufferLimit: "0B"
 `
 	_, err := Load(writeTempYAML(t, yaml))
 	if err == nil {

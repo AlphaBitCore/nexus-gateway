@@ -11,15 +11,14 @@ import (
 // TestApplySpans_ConcurrentToolLeafWriteBack is the regression guard for the
 // deferred-write data race: ApplySpans is called concurrently per request
 // (the pipeline join + ToolCallArgsFromPayload), and the tool-leaf / map-entry
-// write-back closures used to live on package-global slices with no lock. Two
-// goroutines appending to + truncating one shared slice would race, and one
-// goroutine's flush could drop another's masking closure, leaving PII
-// UNMASKED on the wire.
+// write-back closures must not live on shared state. Two goroutines appending
+// to and truncating one slice race, and one goroutine's flush can drop
+// another's masking closure, leaving PII UNMASKED on the wire.
 //
 // Each goroutine masks a DISTINCT tool-call argument leaf (a unique email per
-// payload) and asserts its own result is fully masked. With the package
-// globals this both data-races (caught by `go test -race`) and intermittently
-// leaks an unmasked leaf; with the per-call writeCtx accumulator every result
+// payload) and asserts its own result is fully masked. On package globals this
+// both data-races (caught by `go test -race`) and intermittently leaks an
+// unmasked leaf; with the per-call writeCtx accumulator every result
 // is deterministically masked and no shared state is touched.
 func TestApplySpans_ConcurrentToolLeafWriteBack(t *testing.T) {
 	const n = 64

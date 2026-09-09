@@ -191,7 +191,7 @@ func TestGetKeyRotationStatus_IdleAndRotating(t *testing.T) {
 	}
 }
 
-func TestGetKeyRotationStatus_CountErrorYieldsZero(t *testing.T) {
+func TestGetKeyRotationStatus_CountErrorIsSurfacedNotSwallowed(t *testing.T) {
 	resetRotation(t)
 	mock, db := newMockStore(t)
 	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM "Credential" WHERE encryption_key_id`).
@@ -206,14 +206,22 @@ func TestGetKeyRotationStatus_CountErrorYieldsZero(t *testing.T) {
 	if err := h.GetKeyRotationStatus(c); err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	// Count error swallowed — handler still returns 200 with pendingCount=0.
-	if rec.Code != http.StatusOK {
-		t.Errorf("status = %d; want 200", rec.Code)
+	// A failed count must NOT be reported as "0 pending, idle".
+	//
+	// Asserting the opposite — "count error swallowed; handler
+	// still returns 200 with pendingCount=0" — is how the
+	// defect survives. `pendingCount: 0, status: "idle"` reads as "every
+	// credential is on the current key, nothing left to rotate", which is the
+	// answer an operator uses to decide a key rotation is complete and the old
+	// key can be retired. Giving that answer from a query that failed is how a
+	// still-needed decryption key gets deleted.
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d; want 500 — a failed count must not be reported as a finished rotation", rec.Code)
 	}
 	var resp map[string]any
 	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
-	if resp["pendingCount"].(float64) != 0 {
-		t.Errorf("pendingCount = %v; want 0", resp["pendingCount"])
+	if _, claimed := resp["pendingCount"]; claimed {
+		t.Errorf("the response still carries pendingCount=%v after the count failed", resp["pendingCount"])
 	}
 }
 

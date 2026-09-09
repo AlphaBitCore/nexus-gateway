@@ -2,14 +2,16 @@ package iam
 
 import (
 	"errors"
-	"github.com/goccy/go-json"
+	"log/slog"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/goccy/go-json"
 	"github.com/jackc/pgx/v5"
 
+	cpiam "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/iam"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/users/userstore"
 )
 
@@ -17,9 +19,35 @@ import (
 // users_handler_test.go is already ~5000 LOC; per-feature test files keep the
 // per-handler arrangement scannable.
 
-func TestRotateAPIKey_NotFound_Returns404(t *testing.T) {
-	us := &stubUserStore{rotateErr: pgx.ErrNoRows}
+// rotateStub builds a store whose predecessor lookup succeeds, which every
+// rotate test past the not-found arm now needs: the handler loads the
+// predecessor to learn whose authority the successor would carry, and the grant
+// ceiling evaluates that owner.
+func rotateStub(us *stubUserStore) *stubUserStore {
+	us.getKey = keyOwnedBy("u1")
+	return us
+}
+
+// keyOwnedBy builds a predecessor row owned by the named principal — the input
+// the grant ceiling evaluates.
+func keyOwnedBy(ownerID string) *userstore.AdminAPIKey {
+	return &userstore.AdminAPIKey{ID: "k1", Name: "Key", OwnerUserID: &ownerID}
+}
+
+// rotateHandler wires a super-admin caller, the production shape for the arms
+// that are not exercising the ceiling itself.
+func rotateHandler(us *stubUserStore) *Handler {
 	h := buildHandler(us, &stubIAMStore{}, &stubOrgStore{}, &stubScimStore{}, &stubFleetStore{}, &stubVKStore{}, &stubFedStore{}, &stubGovernanceStore{})
+	h.iamEngine = superAdminTestEngine()
+	return h
+}
+
+// TestRotateAPIKey_PredecessorMissing_Returns404 covers the lookup the ceiling
+// added. It is a distinct arm from the rotate-call 404 below: this one refuses
+// before any key material is generated.
+func TestRotateAPIKey_PredecessorMissing_Returns404(t *testing.T) {
+	us := &stubUserStore{} // getKey nil
+	h := rotateHandler(us)
 	c, rec := adminAuthCtx(http.MethodPost, "/api-keys/missing/rotate", nil, "admin", "admin_user")
 	c.SetParamNames("id")
 	c.SetParamValues("missing")
@@ -31,11 +59,134 @@ func TestRotateAPIKey_NotFound_Returns404(t *testing.T) {
 	}
 }
 
-func TestRotateAPIKey_PredecessorNotActive_Returns409(t *testing.T) {
-	us := &stubUserStore{
-		rotateErr: errors.New("rotate: predecessor status is \"rotating\"; only active keys can be rotated"),
+func TestRotateAPIKey_NotFound_Returns404(t *testing.T) {
+	us := rotateStub(&stubUserStore{rotateErr: pgx.ErrNoRows})
+	h := rotateHandler(us)
+	c, rec := adminAuthCtx(http.MethodPost, "/api-keys/missing/rotate", nil, "admin", "admin_user")
+	c.SetParamNames("id")
+	c.SetParamValues("missing")
+	if err := h.RotateAPIKey(c); err != nil {
+		t.Fatal(err)
 	}
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("code=%d want 404; body=%s", rec.Code, rec.Body)
+	}
+}
+
+// TestRotateAPIKey_CeilingBlocksOtherOwner_Returns403 is the escalation arm.
+// Rotate mints a usable successor that inherits the predecessor's owner, so a
+// caller who does not cover that owner must be refused BEFORE any key material
+// reaches the response — the status code alone is not the property under test.
+func TestRotateAPIKey_CeilingBlocksOtherOwner_Returns403(t *testing.T) {
+	// perPrincipalLoader, not scopedTestEngine: the ceiling asks whether the
+	// CALLER covers the TARGET, so an engine that hands every principal the same
+	// policy set makes any caller cover any owner and the test would pass
+	// against an unguarded handler.
+	loader := &perPrincipalLoader{byID: map[string][]cpiam.LoadedPolicy{
+		"nexus_user:weak":  {scopedPolicy("weak", []string{"admin:api-key.update"}, []string{"nrn:nexus:*:*:*/*"})},
+		"nexus_user:super": {allowAllPolicy("super")},
+	}}
+	us := &stubUserStore{getKey: keyOwnedBy("super")}
 	h := buildHandler(us, &stubIAMStore{}, &stubOrgStore{}, &stubScimStore{}, &stubFleetStore{}, &stubVKStore{}, &stubFedStore{}, &stubGovernanceStore{})
+	h.iamEngine = cpiam.NewEngine(loader, slog.Default())
+	c, rec := adminAuthCtx(http.MethodPost, "/api-keys/k1/rotate", nil, "weak", "admin_user")
+	c.SetParamNames("id")
+	c.SetParamValues("k1")
+	if err := h.RotateAPIKey(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("code=%d want 403; body=%s", rec.Code, rec.Body)
+	}
+	if !strings.Contains(rec.Body.String(), "PRIVILEGE_ESCALATION_BLOCKED") {
+		t.Errorf("missing PRIVILEGE_ESCALATION_BLOCKED code; body=%s", rec.Body)
+	}
+	if strings.Contains(rec.Body.String(), "nxk_") {
+		t.Errorf("a refused rotate still returned key material; body=%s", rec.Body)
+	}
+	if us.rotateCalled {
+		t.Error("the successor was minted despite the ceiling refusing the rotate")
+	}
+}
+
+// TestRegenerateAPIKey_CeilingBlocksOtherOwner_Returns403 is the same escalation
+// one verb along. Regenerate hands back a fresh plaintext key for the SAME
+// owner, so a caller holding only admin:api-key.update could pick a
+// super-admin-owned key and read the credential out of the 200 body.
+func TestRegenerateAPIKey_CeilingBlocksOtherOwner_Returns403(t *testing.T) {
+	loader := &perPrincipalLoader{byID: map[string][]cpiam.LoadedPolicy{
+		"nexus_user:weak":  {scopedPolicy("weak", []string{"admin:api-key.update"}, []string{"nrn:nexus:*:*:*/*"})},
+		"nexus_user:super": {allowAllPolicy("super")},
+	}}
+	us := &stubUserStore{getKey: keyOwnedBy("super")}
+	h := buildHandler(us, &stubIAMStore{}, &stubOrgStore{}, &stubScimStore{}, &stubFleetStore{}, &stubVKStore{}, &stubFedStore{}, &stubGovernanceStore{})
+	h.iamEngine = cpiam.NewEngine(loader, slog.Default())
+	c, rec := adminAuthCtx(http.MethodPost, "/api-keys/k1/regenerate", nil, "weak", "admin_user")
+	c.SetParamNames("id")
+	c.SetParamValues("k1")
+	if err := h.RegenerateAPIKey(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("code=%d want 403; body=%s", rec.Code, rec.Body)
+	}
+	if strings.Contains(rec.Body.String(), "nxk_") {
+		t.Errorf("a refused regenerate still returned key material; body=%s", rec.Body)
+	}
+	if us.regenCalled {
+		t.Error("the key was regenerated despite the ceiling refusing it")
+	}
+}
+
+// TestRegenerateAPIKey_UnownedKey_SkipsCeiling pins the skip condition so the
+// fix cannot be mistaken for "refuse everything". An unowned key authenticates
+// as itself and delegates nobody's authority, so regenerating it must not be
+// made to depend on covering a principal that does not exist.
+//
+// The engine is left NIL deliberately, and that is what makes this arm
+// mutation-provable. With an engine wired, an absent owner resolves to an empty
+// policy set which any caller trivially covers — so removing the skip would
+// change nothing observable and the assertion would pin nothing. With no engine
+// the skip is the only thing standing between an unowned key and a 503.
+func TestRegenerateAPIKey_UnownedKey_SkipsCeiling(t *testing.T) {
+	us := &stubUserStore{getKey: &userstore.AdminAPIKey{ID: "k1", Name: "Key"}} // OwnerUserID nil
+	h := buildHandler(us, &stubIAMStore{}, &stubOrgStore{}, &stubScimStore{}, &stubFleetStore{}, &stubVKStore{}, &stubFedStore{}, &stubGovernanceStore{})
+	c, rec := adminAuthCtx(http.MethodPost, "/api-keys/k1/regenerate", nil, "weak", "admin_user")
+	c.SetParamNames("id")
+	c.SetParamValues("k1")
+	if err := h.RegenerateAPIKey(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("an unowned key was refused: code=%d body=%s", rec.Code, rec.Body)
+	}
+	if !us.regenCalled {
+		t.Error("the unowned key was not regenerated")
+	}
+}
+
+// TestRegenerateAPIKey_SelfOwnedKey_SkipsCeiling is the second skip: minting for
+// yourself confers nothing you do not already hold. Same nil-engine reasoning —
+// it is the arm that proves the self-skip is load-bearing rather than decorative.
+func TestRegenerateAPIKey_SelfOwnedKey_SkipsCeiling(t *testing.T) {
+	us := &stubUserStore{getKey: keyOwnedBy("weak")}
+	h := buildHandler(us, &stubIAMStore{}, &stubOrgStore{}, &stubScimStore{}, &stubFleetStore{}, &stubVKStore{}, &stubFedStore{}, &stubGovernanceStore{})
+	c, rec := adminAuthCtx(http.MethodPost, "/api-keys/k1/regenerate", nil, "weak", "admin_user")
+	c.SetParamNames("id")
+	c.SetParamValues("k1")
+	if err := h.RegenerateAPIKey(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("a caller regenerating their own key was refused: code=%d body=%s", rec.Code, rec.Body)
+	}
+}
+
+func TestRotateAPIKey_PredecessorNotActive_Returns409(t *testing.T) {
+	us := rotateStub(&stubUserStore{
+		rotateErr: errors.New("rotate: predecessor status is \"rotating\"; only active keys can be rotated"),
+	})
+	h := rotateHandler(us)
 	c, rec := adminAuthCtx(http.MethodPost, "/api-keys/k1/rotate", nil, "admin", "admin_user")
 	c.SetParamNames("id")
 	c.SetParamValues("k1")
@@ -58,8 +209,8 @@ func TestRotateAPIKey_PredecessorNotActive_Returns409(t *testing.T) {
 }
 
 func TestRotateAPIKey_DBError_Returns500(t *testing.T) {
-	us := &stubUserStore{rotateErr: errors.New("rotate: insert successor: connection reset")}
-	h := buildHandler(us, &stubIAMStore{}, &stubOrgStore{}, &stubScimStore{}, &stubFleetStore{}, &stubVKStore{}, &stubFedStore{}, &stubGovernanceStore{})
+	us := rotateStub(&stubUserStore{rotateErr: errors.New("rotate: insert successor: connection reset")})
+	h := rotateHandler(us)
 	c, rec := adminAuthCtx(http.MethodPost, "/api-keys/k1/rotate", nil, "admin", "admin_user")
 	c.SetParamNames("id")
 	c.SetParamValues("k1")
@@ -74,7 +225,7 @@ func TestRotateAPIKey_DBError_Returns500(t *testing.T) {
 func TestRotateAPIKey_Success_Returns201WithKeyAndPredecessorRotating(t *testing.T) {
 	uid := "u1"
 	rotatedAt := time.Now().UTC()
-	us := &stubUserStore{
+	us := rotateStub(&stubUserStore{
 		rotateResult: &userstore.RotateAdminAPIKeyResult{
 			Successor: &userstore.AdminAPIKey{
 				ID: "k2", Name: "Key", KeyPrefix: "nxk_aaaabbbb",
@@ -86,8 +237,8 @@ func TestRotateAPIKey_Success_Returns201WithKeyAndPredecessorRotating(t *testing
 				RotatedAt: &rotatedAt,
 			},
 		},
-	}
-	h := buildHandler(us, &stubIAMStore{}, &stubOrgStore{}, &stubScimStore{}, &stubFleetStore{}, &stubVKStore{}, &stubFedStore{}, &stubGovernanceStore{})
+	})
+	h := rotateHandler(us)
 	c, rec := adminAuthCtx(http.MethodPost, "/api-keys/k1/rotate", nil, "admin", "admin_user")
 	c.SetParamNames("id")
 	c.SetParamValues("k1")

@@ -527,7 +527,7 @@ func TestValidate_CredentialKeyMapOnlyBoots(t *testing.T) {
 
 // TestLoad_EnvBoolsForceFalse verifies the env overrides are symmetric: an
 // explicit "false"/"0" turns a yaml-enabled flag OFF (the env could
-// previously only force true, so disabling cache/CORS required a yaml edit).
+// only force true would leave disabling cache/CORS to a yaml edit).
 func TestLoad_EnvBoolsForceFalse(t *testing.T) {
 	p := writeYAML(t, "cache:\n  enabled: true\ncors:\n  enabled: true\n")
 	setRequiredEnvBaseline(t)

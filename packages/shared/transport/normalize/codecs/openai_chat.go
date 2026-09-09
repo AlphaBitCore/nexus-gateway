@@ -169,6 +169,14 @@ type openAIChatMessage struct {
 	// providers (xAI, OpenRouter) use for the same chain-of-thought
 	// text as reasoning_content. Whichever field is non-empty wins.
 	Reasoning string `json:"reasoning,omitempty"`
+	// Refusal is the text the model returns INSTEAD of an answer when a
+	// safety or structured-output refusal fires — `content` is null and
+	// this is the entire assistant turn. It is delivered to the caller
+	// like any other text, so it belongs at the waist: without it every
+	// consumer downstream (compliance scanning included) reads a refused
+	// turn as empty. The streaming side already models it distinctly as
+	// Chunk.RefusalDelta; this closes the same gap on the non-stream wire.
+	Refusal string `json:"refusal,omitempty"`
 	// Audio carries an audio-capable model's spoken reply on the chat
 	// wire. Without this field the whole modality vanished from the
 	// record and the turn read as an empty assistant message.
@@ -391,9 +399,8 @@ func openAIContentPart(part map[string]any, path string) core.ContentBlock {
 			return mediaBlock(&core.MediaRef{Modality: core.ModalityImage, Source: core.MediaAbsent})
 		}
 		urlStr, _ := iu["url"].(string)
-		// A data URI declares its own mime in the prefix. Reading it is what
-		// makes a WebP report image/webp instead of the bare "image" every
-		// format used to collapse to.
+		// A data URI declares its own mime in the prefix. Reading it is what makes
+		// a WebP report image/webp rather than a bare "image".
 		return mediaBlock(inlineOrExternal(urlStr, locator.JoinSuffix(path, "image_url.url"), core.ModalityImage))
 	case "video_url":
 		// Same field shape as image_url. Before this case existed, a video
@@ -441,9 +448,9 @@ func openAIContentPart(part map[string]any, path string) core.ContentBlock {
 	default:
 		// Preserve as text serialization of the unknown part so audit
 		// readers can see what the upstream sent. Known media types are
-		// handled above — this branch used to swallow whole audio clips and
-		// PDFs into text blocks, which is how they reached the redaction
-		// pipeline as if they were prose.
+		// handled above; one reaching this branch puts a whole audio clip or
+		// PDF into a text block, and from there into the redaction pipeline as
+		// if it were prose.
 		return core.ContentBlock{Type: core.ContentText, Text: payloadSafeJSON(part)}
 	}
 }
@@ -672,6 +679,13 @@ func (n *OpenAIChatNormalizer) normalizeNonStreamResponse(raw []byte, meta core.
 			Content: decodeOpenAIContent(ch.Message.Content, ch.Message.ToolCalls, ch.Message.ToolCallID,
 				firstNonEmptyString(ch.Message.ReasoningContent, ch.Message.Reasoning), base),
 			FinishReason: ch.FinishReason,
+		}
+		// A refusal is the assistant's reply when it declines: `content` is
+		// null and this carries the whole turn.
+		if ch.Message.Refusal != "" {
+			msg.Content = append(msg.Content, core.ContentBlock{
+				Type: core.ContentRefusal, Text: ch.Message.Refusal,
+			})
 		}
 		// N1: audio output. The message-level `audio` object is the only
 		// audio modality on the most common chat wire, and it was dropped

@@ -29,7 +29,23 @@ package cacheconfig
 // fields irrelevant to a particular adapter remain nil-omitted.
 type AdapterConfig struct {
 	// Anthropic family (anthropic, bedrock).
-	MarkerInjectEnabled    *bool `json:"marker_inject_enabled,omitempty"`
+	MarkerInjectEnabled *bool `json:"marker_inject_enabled,omitempty"`
+	// MarkerBoundary3Enabled adds a SECOND explicit cache breakpoint, one turn
+	// behind the automatic one, and is meaningful only while
+	// MarkerInjectEnabled is on.
+	//
+	// Anthropic's automatic caching places its breakpoint on the last cacheable
+	// block and finds the previous turn's entry by walking backward — but only
+	// 20 blocks. A turn that appends more than that (an agent round with many
+	// tool_use / tool_result blocks) pushes the previous write out of reach and
+	// the conversation silently stops hitting. The provider's own guidance for
+	// that case is a second breakpoint nearer the last write, which is what this
+	// knob places.
+	//
+	// It is OFF by default. Its historical anchor — the second-to-last user
+	// message — was measurably wrong, writing 2.8 tokens of cache for every
+	// token it read on staging traffic; the anchor below is the end of the
+	// previous assistant turn instead.
 	MarkerBoundary3Enabled *bool `json:"marker_boundary3_enabled,omitempty"`
 
 	// Gemini family (gemini, vertex).

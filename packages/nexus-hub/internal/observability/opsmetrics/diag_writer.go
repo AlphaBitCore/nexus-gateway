@@ -102,7 +102,7 @@ var diagEventCols = []string{
 	"source",
 	"message",
 	"message_hash",
-	"trace_id",
+	"external_request_id",
 	"attrs",
 	"stack_trace",
 	"repeat_count",
@@ -320,11 +320,11 @@ func (w *DiagWriterImpl) insertBatch(ctx context.Context, envs []diagEnvelope) e
 			osInfoBytes = b
 		}
 
-		// stack_trace, agent_version, and trace_id are nullable TEXT columns.
+		// stack_trace, agent_version, and external_request_id are nullable TEXT columns.
 		// pgx maps a Go *string to a SQL NULL when nil, so we forward "" →
-		// NULL via pointer indirection. Empty trace_id (events emitted off
+		// NULL via pointer indirection. An empty request id (events emitted off
 		// any request scope — e.g. boot-time fatals) lands NULL rather than
-		// "" so admin queries can filter `WHERE trace_id IS NULL` cleanly.
+		// "" so admin queries can filter `WHERE external_request_id IS NULL` cleanly.
 		var stackPtr *string
 		if evt.StackTrace != "" {
 			s := evt.StackTrace
@@ -336,8 +336,8 @@ func (w *DiagWriterImpl) insertBatch(ctx context.Context, envs []diagEnvelope) e
 			agentVerPtr = &s
 		}
 		var tracePtr *string
-		if evt.TraceID != "" {
-			s := evt.TraceID
+		if evt.ExternalRequestID != "" {
+			s := evt.ExternalRequestID
 			tracePtr = &s
 		}
 

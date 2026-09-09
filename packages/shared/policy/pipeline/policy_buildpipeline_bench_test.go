@@ -128,7 +128,7 @@ func benchBuild(b *testing.B, r *PolicyResolver, stage, ingress string, ep core.
 	// hook cache exactly as the first production request would, so the loop
 	// measures STEADY-STATE cost, which is what every request after the first
 	// pays.
-	warm, err := r.BuildPipeline(stage, ingress, ep, nil, 5*time.Second, 30*time.Second, false, true, lg)
+	warm, _, err := r.BuildPipeline(stage, ingress, ep, nil, 5*time.Second, 30*time.Second, false, true, lg)
 	if err != nil {
 		b.Fatalf("warmup BuildPipeline: %v", err)
 	}
@@ -139,7 +139,7 @@ func benchBuild(b *testing.B, r *PolicyResolver, stage, ingress string, ep core.
 	b.ReportAllocs()
 	b.ResetTimer()
 	for range b.N {
-		p, err := r.BuildPipeline(stage, ingress, ep, nil, 5*time.Second, 30*time.Second, false, true, lg)
+		p, _, err := r.BuildPipeline(stage, ingress, ep, nil, 5*time.Second, 30*time.Second, false, true, lg)
 		if err != nil || p == nil {
 			b.Fatalf("BuildPipeline: err=%v nil=%v", err, p == nil)
 		}
@@ -173,14 +173,14 @@ func BenchmarkBuildPipeline_ResponseEndpointGated(b *testing.B) {
 func BenchmarkBuildPipeline_RequestParallel(b *testing.B) {
 	r := benchResolver(b)
 	lg := testLogger()
-	if _, err := r.BuildPipeline("request", "COMPLIANCE_PROXY", "", nil, 5*time.Second, 30*time.Second, false, true, lg); err != nil {
+	if _, _, err := r.BuildPipeline("request", "COMPLIANCE_PROXY", "", nil, 5*time.Second, 30*time.Second, false, true, lg); err != nil {
 		b.Fatalf("warmup: %v", err)
 	}
 	b.ReportAllocs()
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			p, err := r.BuildPipeline("request", "COMPLIANCE_PROXY", "", nil, 5*time.Second, 30*time.Second, false, true, lg)
+			p, _, err := r.BuildPipeline("request", "COMPLIANCE_PROXY", "", nil, 5*time.Second, 30*time.Second, false, true, lg)
 			if err != nil || p == nil {
 				b.Fatalf("BuildPipeline: err=%v nil=%v", err, p == nil)
 			}

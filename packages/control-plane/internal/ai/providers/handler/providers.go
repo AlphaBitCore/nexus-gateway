@@ -160,10 +160,10 @@ type createProviderCredentialInput struct {
 // provider/model/credential tables to an accurate admin-API error. The create
 // path can trip several distinct unique indexes — provider name, provider path
 // prefix, the globally-unique credential name, the globally-unique model code,
-// and the per-provider model natural key. Previously every non-model collision
-// was reported as "provider name exists", which misdirected admins who had only
-// reused a credential name or model code from an earlier provider (changing the
-// provider name never cleared the error). The machine code lets the UI point at
+// and the per-provider model natural key. Reporting every non-model collision
+// as "provider name exists" misdirects an admin who has only
+// reused a credential name or model code from an earlier provider — changing the
+// provider name never clears the error. The machine code lets the UI point at
 // the offending field. providerName is interpolated into the name message when
 // known (empty otherwise).
 func conflictForUniqueViolation(pgErr *pgconn.PgError, providerName string) (message, code string) {

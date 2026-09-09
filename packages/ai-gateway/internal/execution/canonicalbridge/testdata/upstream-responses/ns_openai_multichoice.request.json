@@ -1,0 +1,11 @@
+{
+  "model": "gpt-4o-mini",
+  "n": 2,
+  "max_tokens": 24,
+  "messages": [
+    {
+      "role": "user",
+      "content": "name one color"
+    }
+  ]
+}

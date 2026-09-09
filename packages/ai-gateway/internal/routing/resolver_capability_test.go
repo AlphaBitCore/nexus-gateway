@@ -294,7 +294,7 @@ func TestCapabilityPreFilter_AllRejected(t *testing.T) {
 //
 // Scenario: primary (Gemini, supports 1536) and recovery (Cohere, 1024 only),
 // both behind a dimensions=1536 request.
-//   - Cohere recovery target MUST be rejected (was previously kept).
+//   - Cohere recovery target MUST be rejected.
 //   - Gemini primary MUST survive, so ResolveTargets returns it (no 400).
 func TestCapabilityPreFilter_RecoveryTargetsAlsoFiltered(t *testing.T) {
 	f := newCapFixture()

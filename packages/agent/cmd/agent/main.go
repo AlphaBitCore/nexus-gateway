@@ -12,7 +12,8 @@ import (
 
 // Build-time identity. version is overridden via -ldflags
 // "-X main.version=…"; commit and builtAt are likewise stamped by
-// scripts/build.sh so an operator can correlate a running daemon with
+// packages/agent/platform/linux/scripts/build.sh so an operator can
+// correlate a running daemon with
 // the exact source revision that produced it. The defaults here keep
 // `go run` working without ldflags.
 var (

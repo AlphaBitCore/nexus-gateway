@@ -9,6 +9,7 @@ package proxy
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -249,11 +250,17 @@ func TestRealtimeFinalizeOnce_Race(t *testing.T) {
 
 	const sessions = 6
 	var wg sync.WaitGroup
-	for range sessions {
+	for i := range sessions {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			c, _, err := rtDial(t, srv.URL, "gpt-realtime", nil)
+			// Each dial carries its own request id, which is what the RequestID
+			// middleware guarantees in production — this test mounts the
+			// handler directly, so it supplies what the middleware would.
+			// The id is what groups (and separates) a session's audit rows.
+			hdr := http.Header{}
+			hdr.Set("X-Nexus-Request-Id", fmt.Sprintf("rid-session-%d", i))
+			c, _, err := rtDial(t, srv.URL, "gpt-realtime", hdr)
 			if err != nil {
 				return // cap contention (cap=2) — refused upgrades finalize too
 			}
@@ -276,12 +283,15 @@ func TestRealtimeFinalizeOnce_Race(t *testing.T) {
 	}
 	seen := map[string]bool{}
 	for _, m := range msgs {
-		if m.TraceID == "" {
-			t.Error("row without a trace id")
+		// Each handler invocation gets its own minted request id, so a repeat
+		// means one session finalized twice.
+		sid := m.ExternalRequestID
+		if sid == "" {
+			t.Error("row without a request id")
 		}
-		if seen[m.TraceID] {
-			t.Errorf("trace id %q appears on two SESSION rows — a session finalized twice", m.TraceID)
+		if seen[sid] {
+			t.Errorf("request id %q appears on two SESSION rows — a session finalized twice", sid)
 		}
-		seen[m.TraceID] = true
+		seen[sid] = true
 	}
 }

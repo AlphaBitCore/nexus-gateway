@@ -52,7 +52,7 @@ func (w *Writer) effectiveMaxQueue() int {
 // after Start, LossMode() already reports the mode actually in force.
 // Wired from AuditConfig.LossMode at startup; call before any Enqueue. Returns the receiver.
 func (w *Writer) WithLossMode(mode string) *Writer {
-	// lossmode.Resolve carries the rule this switch used to spell inline: an empty or
+	// lossmode.Resolve carries the rule rather than spelling it inline here: an empty or
 	// unrecognised value becomes the no-loss default, because a config typo must never be
 	// able to make an audit pipeline silently start dropping records. Provably the same
 	// mapping as the four-case switch it replaces — see the shared package's

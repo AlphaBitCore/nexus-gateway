@@ -23,11 +23,12 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/internal/proxy/conn"
 	"github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/internal/proxy/connect"
 	"github.com/AlphaBitCore/nexus-gateway/packages/compliance-proxy/internal/proxy/forward"
+	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/httpclient"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/diag"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/domain"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/payloadcapture"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
-	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
 	normalizecore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/streaming"
 	streampolicy "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/streaming/policy"
@@ -134,13 +135,22 @@ type ProxyServer struct {
 	// Compliance kernel
 	compliancePipeline *compliance.PolicyResolver
 	auditEmitter       *compliance.AuditEmitter
-	// streamingTuning is the hot-swappable bundle of streaming-mode tunables:
-	// mode string + per-hook timeout + total timeout. Each CONNECT loads via
-	// atomic.Pointer so the compliance_streaming shadow key takes effect on
-	// the next bumped request without rebuilding the proxy server. Collapsed
-	// into a snapshot type so the live pipeline reads a single coherent value
-	// (no torn read where mode was updated but timeouts weren't).
-	streamingTuning atomic.Pointer[streamingTuningSnapshot]
+	// streamingTuning is the streaming timeout bundle, fixed at construction.
+	//
+	// An atomic.Pointer documented as hot-swappable by a
+	// "compliance_streaming" shadow key would have nothing writing it after
+	// construction: a setter for it would have no caller outside its own test,
+	// and the
+	// key it names does not exist — the registered one is the transposition,
+	// streaming_compliance, and that one drives the streaming POLICY through
+	// SetStreamingPolicyGlobal, not these timeouts. An atomic that is written
+	// once and never again is a claim about concurrency the code does not
+	// make, plus a load on every CONNECT.
+	//
+	// The zero value is the safe default, which is what the removed nil guard
+	// on the read path was for: a ProxyServer built directly in a test gets
+	// zero timeouts, and the pipeline falls back to its own defaults.
+	streamingTuning streamingTuningSnapshot
 	streamingConfig streaming.LiveConfig
 	parallelHooks   bool
 	// streamingPolicyStore is the hot-swappable streaming compliance
@@ -228,10 +238,10 @@ func NewProxyServer(
 		attestationVerifier:      cfg.AttestationVerifier,
 	}
 	ps.onboardingEnabled.Store(cfg.OnboardingEnabled)
-	ps.streamingTuning.Store(&streamingTuningSnapshot{
+	ps.streamingTuning = streamingTuningSnapshot{
 		PerHookTimeout: cfg.PerHookTimeout,
 		TotalTimeout:   cfg.TotalTimeout,
-	})
+	}
 	// Hold the *Store directly — Hub shadow pushes call
 	// store.ApplyShadowState on this exact instance, so the hot path
 	// reads via Get() always see the latest admin policy. No
@@ -240,30 +250,15 @@ func NewProxyServer(
 	return ps
 }
 
-// streamingTuningSnapshot is the atomic-pointer payload that captures
-// the hot-swappable streaming-timeout tunables in one coherent value.
+// streamingTuningSnapshot captures the streaming-timeout tunables in one
+// value. It is neither an atomic-pointer payload nor hot-swappable any more:
+// the setter that would have swapped it had no caller and named a shadow key
+// that does not exist, so the field is written once at construction.
 // (There is no mode field — admin streaming policy is the
 // single source of truth, read via streamingPolicyStore.)
 type streamingTuningSnapshot struct {
 	PerHookTimeout time.Duration // per-hook budget; zero falls back to the package default
 	TotalTimeout   time.Duration // whole-request budget across all hooks
-}
-
-// SetStreamingTuning atomically replaces the streaming timeout tunables.
-// Called by the compliance-proxy thingclient.OnConfigChanged callback
-// when Hub pushes the compliance_streaming shadow key. Zero fields are
-// ignored — the previous value stays put — so a partial payload
-// updates just the supplied knobs.
-func (p *ProxyServer) SetStreamingTuning(perHookTimeout, totalTimeout time.Duration) {
-	cur := p.streamingTuning.Load()
-	next := *cur
-	if perHookTimeout > 0 {
-		next.PerHookTimeout = perHookTimeout
-	}
-	if totalTimeout > 0 {
-		next.TotalTimeout = totalTimeout
-	}
-	p.streamingTuning.Store(&next)
 }
 
 // SetOnboardingEnabled toggles onboarding mode at runtime. Safe to call
@@ -351,13 +346,15 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Seed the nexus request id into the request context so any outbound
 	// httpclient call made while processing this CONNECT can log (and, when
-	// opted in, propagate) it. Honor an id supplied by an upstream Nexus
-	// service (ai-gateway / agent); mint a UUID only when none was supplied
-	// so every CONNECT carries a correlation id.
-	reqID := r.Header.Get("X-Nexus-Request-Id")
+	// opted in, propagate) it. Resolve through the shared reader so this path
+	// honours both accepted spellings — the same contract the bumped-request
+	// path uses; a service reading the header two ways is how one of them ends
+	// up missing a rename. Mint only when the client sent neither, so every
+	// CONNECT carries a correlation id.
+	reqID := traffic.ResolveRequestID(r.Header)
 	if reqID == "" {
 		reqID = uuid.New().String()
-		r.Header.Set("X-Nexus-Request-Id", reqID)
+		r.Header.Set(traffic.HeaderRequestID, reqID)
 	}
 	r = r.WithContext(nexushttp.WithRequestID(r.Context(), reqID))
 
@@ -370,16 +367,15 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	targetHost := net.JoinHostPort(host, port)
 	sourceAddr := r.RemoteAddr
 
-	// Stamp the canonical trace_id key onto the connection-scoped logger.
-	// The shared SlogSink lifts this attr into DiagEvent.TraceID so every
+	// Stamp the request id onto the connection-scoped logger. The shared
+	// SlogSink lifts this attr into DiagEvent.ExternalRequestID so every
 	// thing_diag_event row emitted during this CONNECT carries the typed
-	// trace correlation column. Empty when upstream didn't supply a
-	// header — left as "" so the typed column lands NULL (the Hub writer
-	// pointer-indirects "" → NULL).
+	// correlation column. Empty when the client supplied no id — left as "" so
+	// the typed column lands NULL (the Hub writer pointer-indirects "" → NULL).
 	connLogger := p.logger.With(
 		"source", sourceAddr,
 		"target", targetHost,
-		"trace_id", reqID,
+		diag.ExternalRequestIDAttrKey, reqID,
 	)
 
 	// Access control checks
@@ -466,7 +462,7 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// Connection-stage: endpoint type is not yet known (CONNECT predates
 		// TLS handshake). Pass "" and nil modalities so all hooks that
 		// SupportsEndpoint("") continue to run, preserving existing behavior.
-		pipe, pipeErr := p.compliancePipeline.BuildPipeline(
+		pipe, _, pipeErr := p.compliancePipeline.BuildPipeline(
 			"connection",
 			"COMPLIANCE_PROXY",
 			"", nil, // endpoint/modality unknown at CONNECT time
@@ -495,7 +491,7 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		} else if pipe != nil {
 			sourceIP, _, _ := net.SplitHostPort(sourceAddr)
 			input := &core.HookInput{
-				RequestID:   r.Header.Get("X-Nexus-Request-Id"),
+				RequestID:   traffic.ResolveRequestID(r.Header),
 				Stage:       "connection",
 				SourceIP:    sourceIP,
 				TargetHost:  host,
@@ -555,14 +551,9 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		connID = fmt.Sprintf("%s->%s", sourceAddr, targetHost)
 	}
 
-	// Load the streaming tuning snapshot once per CONNECT so the compliance
-	// pipeline sees a coherent value even if SetStreamingTuning fires mid-request.
-	// Guard against nil: ProxyServer may be constructed directly in tests without
-	// calling NewProxyServer, so the atomic pointer may be uninitialized.
-	var st streamingTuningSnapshot
-	if snap := p.streamingTuning.Load(); snap != nil {
-		st = *snap
-	}
+	// Fixed at construction; a ProxyServer built directly in a test carries
+	// the zero value and the pipeline falls back to its own defaults.
+	st := p.streamingTuning
 	// streamingPolicyStore is wired in via ProxyConfig.StreamingPolicyStore;
 	// forward.Run hands the *Store off to tlsbump.WithStreamingPolicyStore
 	// which resolves the live snapshot at SSE-handler entry. Nil-safe:

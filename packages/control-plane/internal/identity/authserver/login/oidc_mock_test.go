@@ -270,11 +270,11 @@ func TestOIDCCallbackHandler_Success_ExistingUser(t *testing.T) {
 	fx.deps.Audit = audit.NewWriter(prod, "admin-audit", nil)
 	expectGetByID(fx.mock, fx.idpID, fx.cfgJSON, false)
 	// FederatedStore.FindByIdPSubject hits the DB; existing user — one row.
-	fx.mock.ExpectQuery(`SELECT id, "userId", "idpId"`).
+	fx.mock.ExpectQuery(`u\.status, u\."disabledAt"`).
 		WithArgs(fx.idpID, fx.subject).
 		WillReturnRows(pgxmock.NewRows([]string{
-			"id", "userId", "idpId", "externalSubject", "externalEmail", "rawClaims", "linkedAt", "lastLoginAt",
-		}).AddRow("fi-1", "user-real", fx.idpID, fx.subject, ptrStr("alice@example.com"), []byte(`{}`), time.Now(), (*time.Time)(nil)))
+			"id", "userId", "idpId", "externalSubject", "externalEmail", "rawClaims", "linkedAt", "lastLoginAt", "status", "disabledAt",
+		}).AddRow("fi-1", "user-real", fx.idpID, fx.subject, ptrStr("alice@example.com"), []byte(`{}`), time.Now(), (*time.Time)(nil), "active", (*time.Time)(nil)))
 	// UpdateRawClaims fires after lookup (best-effort, ignored err).
 	fx.mock.ExpectExec(`UPDATE "UserFederatedIdentity" SET "rawClaims"`).
 		WithArgs("fi-1", pgxmock.AnyArg()).
@@ -347,7 +347,7 @@ func TestOIDCCallbackHandler_Success_JIT(t *testing.T) {
 	fx := newCallbackFixture(t, true)
 	expectGetByID(fx.mock, fx.idpID, fx.cfgJSON, true)
 	// FindByIdPSubject → no rows.
-	fx.mock.ExpectQuery(`SELECT id, "userId", "idpId"`).
+	fx.mock.ExpectQuery(`u\.status, u\."disabledAt"`).
 		WithArgs(fx.idpID, fx.subject).
 		WillReturnError(pgx.ErrNoRows)
 	// JITProvisionUser runs in a tx.
@@ -401,7 +401,7 @@ func TestOIDCCallbackHandler_Success_JIT(t *testing.T) {
 func TestOIDCCallbackHandler_JITDisabled(t *testing.T) {
 	fx := newCallbackFixture(t, false)
 	expectGetByID(fx.mock, fx.idpID, fx.cfgJSON, false) // jitEnabled=false
-	fx.mock.ExpectQuery(`SELECT id, "userId", "idpId"`).
+	fx.mock.ExpectQuery(`u\.status, u\."disabledAt"`).
 		WithArgs(fx.idpID, fx.subject).
 		WillReturnError(pgx.ErrNoRows)
 
@@ -657,7 +657,7 @@ func TestOIDCCallbackHandler_JWTIssuerMismatch(t *testing.T) {
 func TestOIDCCallbackHandler_FindByIdPSubjectFailure(t *testing.T) {
 	fx := newCallbackFixture(t, false)
 	expectGetByID(fx.mock, fx.idpID, fx.cfgJSON, false)
-	fx.mock.ExpectQuery(`SELECT id, "userId", "idpId"`).
+	fx.mock.ExpectQuery(`u\.status, u\."disabledAt"`).
 		WithArgs(fx.idpID, fx.subject).
 		WillReturnError(errors.New("network blip"))
 
@@ -682,7 +682,7 @@ func TestOIDCCallbackHandler_FindByIdPSubjectFailure(t *testing.T) {
 func TestOIDCCallbackHandler_JITFailure(t *testing.T) {
 	fx := newCallbackFixture(t, false)
 	expectGetByID(fx.mock, fx.idpID, fx.cfgJSON, true)
-	fx.mock.ExpectQuery(`SELECT id, "userId", "idpId"`).
+	fx.mock.ExpectQuery(`u\.status, u\."disabledAt"`).
 		WithArgs(fx.idpID, fx.subject).
 		WillReturnError(pgx.ErrNoRows)
 	fx.mock.ExpectBegin()
@@ -709,7 +709,7 @@ func TestOIDCCallbackHandler_JITFailure(t *testing.T) {
 func TestOIDCCallbackHandler_JITUsesSubjectAsDisplayWhenEmailMissing(t *testing.T) {
 	fx := newCallbackFixture(t, false)
 	expectGetByID(fx.mock, fx.idpID, fx.cfgJSON, true)
-	fx.mock.ExpectQuery(`SELECT id, "userId", "idpId"`).
+	fx.mock.ExpectQuery(`u\.status, u\."disabledAt"`).
 		WithArgs(fx.idpID, fx.subject).
 		WillReturnError(pgx.ErrNoRows)
 	// JITProvisionParams.DisplayName = claims.Subject when email is empty,
@@ -765,11 +765,11 @@ func TestOIDCCallbackHandler_RedirectBuildFailure(t *testing.T) {
 	fx.pending.Put(fx.authctx, pe)
 
 	expectGetByID(fx.mock, fx.idpID, fx.cfgJSON, false)
-	fx.mock.ExpectQuery(`SELECT id, "userId", "idpId"`).
+	fx.mock.ExpectQuery(`u\.status, u\."disabledAt"`).
 		WithArgs(fx.idpID, fx.subject).
 		WillReturnRows(pgxmock.NewRows([]string{
-			"id", "userId", "idpId", "externalSubject", "externalEmail", "rawClaims", "linkedAt", "lastLoginAt",
-		}).AddRow("fi-1", "user-real", fx.idpID, fx.subject, ptrStr("alice@example.com"), []byte(`{}`), time.Now(), (*time.Time)(nil)))
+			"id", "userId", "idpId", "externalSubject", "externalEmail", "rawClaims", "linkedAt", "lastLoginAt", "status", "disabledAt",
+		}).AddRow("fi-1", "user-real", fx.idpID, fx.subject, ptrStr("alice@example.com"), []byte(`{}`), time.Now(), (*time.Time)(nil), "active", (*time.Time)(nil)))
 	fx.mock.ExpectExec(`UPDATE "UserFederatedIdentity" SET "rawClaims"`).
 		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
 
@@ -903,11 +903,11 @@ func TestOIDCCallbackHandler_DiscoversEndpointsFromIssuer(t *testing.T) {
 	}
 
 	expectGetByID(mock, idpID, cfgJSON, false)
-	mock.ExpectQuery(`SELECT id, "userId", "idpId"`).
+	mock.ExpectQuery(`u\.status, u\."disabledAt"`).
 		WithArgs(idpID, subject).
 		WillReturnRows(pgxmock.NewRows([]string{
-			"id", "userId", "idpId", "externalSubject", "externalEmail", "rawClaims", "linkedAt", "lastLoginAt",
-		}).AddRow("fi-1", "user-real", idpID, subject, ptrStr("bob@example.com"), []byte(`{}`), time.Now(), (*time.Time)(nil)))
+			"id", "userId", "idpId", "externalSubject", "externalEmail", "rawClaims", "linkedAt", "lastLoginAt", "status", "disabledAt",
+		}).AddRow("fi-1", "user-real", idpID, subject, ptrStr("bob@example.com"), []byte(`{}`), time.Now(), (*time.Time)(nil), "active", (*time.Time)(nil)))
 	mock.ExpectExec(`UPDATE "UserFederatedIdentity" SET "rawClaims"`).
 		WithArgs("fi-1", pgxmock.AnyArg()).
 		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
@@ -1023,11 +1023,11 @@ func TestOIDCCallbackHandler_AudienceDefaultsToClientID(t *testing.T) {
 	}
 
 	expectGetByID(mock, idpID, cfgJSON, false)
-	mock.ExpectQuery(`SELECT id, "userId", "idpId"`).
+	mock.ExpectQuery(`u\.status, u\."disabledAt"`).
 		WithArgs(idpID, subject).
 		WillReturnRows(pgxmock.NewRows([]string{
-			"id", "userId", "idpId", "externalSubject", "externalEmail", "rawClaims", "linkedAt", "lastLoginAt",
-		}).AddRow("fi-1", "user-real", idpID, subject, ptrStr("bob@example.com"), []byte(`{}`), time.Now(), (*time.Time)(nil)))
+			"id", "userId", "idpId", "externalSubject", "externalEmail", "rawClaims", "linkedAt", "lastLoginAt", "status", "disabledAt",
+		}).AddRow("fi-1", "user-real", idpID, subject, ptrStr("bob@example.com"), []byte(`{}`), time.Now(), (*time.Time)(nil), "active", (*time.Time)(nil)))
 	mock.ExpectExec(`UPDATE "UserFederatedIdentity" SET "rawClaims"`).
 		WithArgs("fi-1", pgxmock.AnyArg()).
 		WillReturnResult(pgxmock.NewResult("UPDATE", 1))
@@ -1098,11 +1098,11 @@ func nonceCallbackDeps(t *testing.T, expectNonce, tokenNonce string, federatedEx
 	}
 	expectGetByID(mock, idpID, cfgJSON, false)
 	if federatedExpected {
-		mock.ExpectQuery(`SELECT id, "userId", "idpId"`).
+		mock.ExpectQuery(`u\.status, u\."disabledAt"`).
 			WithArgs(idpID, subject).
 			WillReturnRows(pgxmock.NewRows([]string{
-				"id", "userId", "idpId", "externalSubject", "externalEmail", "rawClaims", "linkedAt", "lastLoginAt",
-			}).AddRow("fi-1", "user-real", idpID, subject, ptrStr("z@example.com"), []byte(`{}`), time.Now(), (*time.Time)(nil)))
+				"id", "userId", "idpId", "externalSubject", "externalEmail", "rawClaims", "linkedAt", "lastLoginAt", "status", "disabledAt",
+			}).AddRow("fi-1", "user-real", idpID, subject, ptrStr("z@example.com"), []byte(`{}`), time.Now(), (*time.Time)(nil), "active", (*time.Time)(nil)))
 		mock.ExpectExec(`UPDATE "UserFederatedIdentity" SET "rawClaims"`).
 			WithArgs("fi-1", pgxmock.AnyArg()).
 			WillReturnResult(pgxmock.NewResult("UPDATE", 1))
@@ -1140,6 +1140,47 @@ func TestOIDCCallbackHandler_NonceMatch(t *testing.T) {
 	}
 	if rec.Code != http.StatusFound {
 		t.Fatalf("status: got %d, want 302 on nonce match (body=%q)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestOIDCCallbackHandler_SuspendedAccount_MintsNoCode asserts the SSO door
+// consults account state.
+//
+// A callback that takes fi.UserID straight from the federated lookup and
+// mints an auth code consults neither status nor disabledAt — so offboarding
+// and SCIM active:false both report success while the departed employee keeps
+// signing in through their IdP. The IdP asserting who someone is says nothing
+// about whether this deployment still admits them.
+//
+// The row is the production shape: status='suspended' with a NULL disabledAt.
+// No UpdateRawClaims expectation is registered, because the refusal must land
+// before the handler touches the row.
+func TestOIDCCallbackHandler_SuspendedAccount_MintsNoCode(t *testing.T) {
+	fx := newCallbackFixture(t, false)
+	expectGetByID(fx.mock, fx.idpID, fx.cfgJSON, false)
+	fx.mock.ExpectQuery(`u\.status, u\."disabledAt"`).
+		WithArgs(fx.idpID, fx.subject).
+		WillReturnRows(pgxmock.NewRows([]string{
+			"id", "userId", "idpId", "externalSubject", "externalEmail", "rawClaims", "linkedAt", "lastLoginAt", "status", "disabledAt",
+		}).AddRow("fi-1", "user-real", fx.idpID, fx.subject, ptrStr("alice@example.com"), []byte(`{}`), time.Now(), (*time.Time)(nil), "suspended", (*time.Time)(nil)))
+
+	tok := mintIDToken(t, fx.server, fx.subject, "alice@example.com", time.Now().Add(time.Hour))
+	fx.server.SetIDToken(tok)
+
+	c, rec := newOIDCCallbackCtx("auth-code-xyz", fx.authctx)
+	if err := login.OIDCCallbackHandler(fx.deps)(c); err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("a suspended account completed SSO login: status %d, body=%q", rec.Code, rec.Body.String())
+	}
+	// The refusal must not be separable from an unprovisioned subject, or the
+	// response tells an anonymous caller which accounts exist and are disabled.
+	if !strings.Contains(rec.Body.String(), "user_not_provisioned") {
+		t.Fatalf("refusal body distinguishes a suspended account: %q", rec.Body.String())
+	}
+	if loc := rec.Header().Get("Location"); loc != "" {
+		t.Fatalf("a redirect was issued for a refused login: %q", loc)
 	}
 }
 

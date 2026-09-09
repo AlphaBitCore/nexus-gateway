@@ -52,6 +52,16 @@ func (c codec) EncodeRequest(endpoint typology.WireShape, canonicalBody []byte, 
 	// codec (Bedrock Claude wire body == Anthropic Messages shape modulo
 	// the model/anthropic_version edits below). Pass the Anthropic
 	// wire-shape so the codec's shape gate accepts it.
+	//
+	// Prompt-cache markers do not ride along. Anthropic's automatic caching
+	// is a root `cache_control`, and AWS documents its InvokeModel Claude
+	// integration answering 400 for exactly that field — the one Anthropic
+	// body rule this wire does not share. Nothing here has been measured
+	// against a live Bedrock endpoint, and an unverified field on a wire
+	// documented to reject it turns every request into a 400, so this wire
+	// forwards uncached until someone can probe it. Delete this line only
+	// with a live Bedrock probe in the commit that does it.
+	target.PromptCacheMarkers = false
 	res, err := c.anthropic.EncodeRequest(typology.WireShapeAnthropicMessages, canonicalBody, target)
 	if err != nil {
 		return provcore.EncodeResult{}, err

@@ -36,7 +36,7 @@ func (h *Handler) scanSTTPrompt(w http.ResponseWriter, r *http.Request, rec *aud
 		return false
 	}
 	resolver := h.deps.HookConfigCache.Resolver(r.Context())
-	pl, buildErr := resolver.BuildPipeline(
+	pl, _, buildErr := resolver.BuildPipeline(
 		"request", "AI_GATEWAY",
 		typology.EndpointKindSTT,
 		[]hookcore.Modality{hookcore.ModalityText},

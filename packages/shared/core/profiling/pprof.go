@@ -34,6 +34,7 @@ import (
 	"runtime/pprof"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -87,11 +88,11 @@ func Start(name string) (stop func()) {
 // startHTTP binds the profiling endpoint BEFORE claiming it, and treats a bind
 // failure as an error rather than a note.
 //
-// Both matter more than they look. The success line used to be logged ahead of
-// http.ListenAndServe, so a port already held by another process produced
+// Both matter more than they look. Logging the success line ahead of
+// http.ListenAndServe means a port already held by another process produces
 // "pprof http listening addr=127.0.0.1:6061" immediately followed by a WARN — and
-// an operator who then profiled that address got answers from the OTHER process,
-// with a log line agreeing that this service was serving them. A measurement
+// an operator who then profiles that address gets answers from the OTHER process,
+// with a log line agreeing that this service is serving them. A measurement
 // attributed to the wrong process is worse than no measurement.
 //
 // The failure is an ERROR because reaching here means an operator explicitly set
@@ -189,21 +190,44 @@ func startSignalDump(name string) func() {
 	ch := make(chan os.Signal, 1)
 	signal.Notify(ch, sig)
 	slog.Info("pprof file dumps armed — send "+sigName+" to capture", "dir", dir, "cpuSeconds", cpuSecs, "service", name)
+
+	// done cuts an in-flight capture short; stopped reports that the dump
+	// goroutine has actually finished.
+	//
+	// A Disarm that signal.Stops, closes and returns immediately leaves a
+	// capture running when the service tears profiling down, still writing
+	// into a directory the service has stopped accounting for — and the CPU
+	// profile runs for cpuSeconds (20 by default), so the window is wide.
+	// Waiting alone would be no better: shutdown would block for up to those
+	// 20 seconds. Cutting the capture short FIRST and then waiting gives
+	// neither a race nor a stall.
+	done := make(chan struct{})
+	stopped := make(chan struct{})
 	go func() {
+		defer close(stopped)
 		for range ch {
-			dumpProfiles(name, dir, cpuSecs)
+			dumpProfiles(name, dir, cpuSecs, done)
 		}
 	}()
+	var once sync.Once
 	return func() {
-		signal.Stop(ch)
-		close(ch)
+		once.Do(func() {
+			signal.Stop(ch)
+			close(done)
+			close(ch)
+			<-stopped
+		})
 	}
 }
 
 // dumpProfiles writes the instant snapshots immediately, then runs the CPU
 // profile for cpuSecs. Safe to call repeatedly; overlapping CPU captures are
 // skipped (the snapshots still write).
-func dumpProfiles(name, dir string, cpuSecs int) {
+//
+// done, when closed, ends the CPU capture early and writes what was collected
+// so far, so a disarm during a capture neither races the teardown nor waits
+// out the full cpuSecs.
+func dumpProfiles(name, dir string, cpuSecs int, done <-chan struct{}) {
 	ts := time.Now().UTC().Format("20060102T150405Z")
 	writeMemStats(name, dir, ts) // GC count / pauses / heap sizes — read before the GC below
 	runtime.GC()                 // settle the heap before snapshotting it
@@ -229,7 +253,13 @@ func dumpProfiles(name, dir string, cpuSecs int) {
 		return
 	}
 	slog.Info("pprof CPU profile capturing", "file", path, "seconds", cpuSecs)
-	time.Sleep(time.Duration(cpuSecs) * time.Second)
+	timer := time.NewTimer(time.Duration(cpuSecs) * time.Second)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+	case <-done:
+		slog.Info("pprof CPU profile cut short by disarm; writing what was captured", "file", path)
+	}
 	pprof.StopCPUProfile()
 	_ = bw.Flush() // best-effort; a short file on flush failure is self-evident
 	slog.Info("pprof CPU profile written", "file", path)

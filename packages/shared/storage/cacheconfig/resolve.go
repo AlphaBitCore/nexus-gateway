@@ -6,11 +6,9 @@ package cacheconfig
 //
 //	provider_override[K] ?? adapter_default[K] ?? global_default[K] ?? code_default[K]
 //
-// There is no Tier 1 any more: the two pipeline-wide knobs it used to carry
-// (the cache master kill switch and the global normaliser gate) are retired —
-// emergency cache-off is served by Emergency Passthrough / the fleet
-// disable-all, and the upstream rewrite is demand-driven off the Tier-2/3
-// rule + marker-inject settings.
+// There is no Tier 1. Emergency cache-off is served by Emergency Passthrough
+// / the fleet disable-all, and the upstream rewrite is demand-driven off the
+// Tier-2/3 rule + marker-inject settings.
 // Tier 2 and Tier 3 use pointer fields where nil == "not set at this tier".
 // Each knob's source is recorded in Sources for UI badge rendering.
 func Resolve(blob CacheConfigBlob, providerID, adapterType string) ProviderEffective {
@@ -106,4 +104,46 @@ func Resolve(blob CacheConfigBlob, providerID, adapterType string) ProviderEffec
 		eff.Sources["circuit_breaker_open_secs"] = SourceProviderOverride
 	}
 	return eff
+}
+
+// MarkerInjectEnabledFor resolves the single knob the request path asks for on
+// every Anthropic-bound call: does this provider want prompt-cache markers.
+//
+// It follows the same Tier 3 → Tier 2 → code-default chain as Resolve, and
+// exists beside it because Resolve builds a ProviderEffective with a Sources
+// map for the admin UI's per-knob attribution badges. That map is an
+// allocation, and the hot path needs the boolean, not the provenance. Two map
+// index operations and two pointer dereferences, no allocation.
+//
+// Adapters outside the Anthropic family have no marker knob at all — FamilyOf
+// is the one definition of which those are, so no caller has to carry its own
+// list of adapter names to answer the question.
+func MarkerInjectEnabledFor(blob CacheConfigBlob, providerID, adapterType string) bool {
+	if FamilyOf(adapterType) != FamilyAnthropic {
+		return false
+	}
+	if override, ok := blob.Providers[providerID]; ok && override.MarkerInjectEnabled != nil {
+		return *override.MarkerInjectEnabled
+	}
+	if adapter, ok := blob.Adapters[adapterType]; ok && adapter.MarkerInjectEnabled != nil {
+		return *adapter.MarkerInjectEnabled
+	}
+	return CodeDefaults().MarkerInjectEnabled
+}
+
+// MarkerBoundary3EnabledFor resolves the conversation-boundary knob on the same
+// Tier 3 -> Tier 2 -> code-default chain as MarkerInjectEnabledFor, and with the
+// same allocation-free shape. It is meaningful only when marker injection is on;
+// the caller checks that first.
+func MarkerBoundary3EnabledFor(blob CacheConfigBlob, providerID, adapterType string) bool {
+	if FamilyOf(adapterType) != FamilyAnthropic {
+		return false
+	}
+	if override, ok := blob.Providers[providerID]; ok && override.MarkerBoundary3Enabled != nil {
+		return *override.MarkerBoundary3Enabled
+	}
+	if adapter, ok := blob.Adapters[adapterType]; ok && adapter.MarkerBoundary3Enabled != nil {
+		return *adapter.MarkerBoundary3Enabled
+	}
+	return CodeDefaults().MarkerBoundary3Enabled
 }

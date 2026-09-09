@@ -1,13 +1,16 @@
 package bootstrap
 
 import (
+	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/httpclient"
+
 	"context"
-	"github.com/goccy/go-json"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/goccy/go-json"
 )
 
 // fakeHub stands up an HTTP server with controllable response payload
@@ -219,9 +222,9 @@ func TestDefaultHTTPClient_Construction(t *testing.T) {
 	if c.Timeout != 10*time.Second {
 		t.Errorf("Timeout = %v, want 10s", c.Timeout)
 	}
-	tr, ok := c.Transport.(*http.Transport)
+	tr, ok := nexushttp.Base(c.Transport).(*http.Transport)
 	if !ok {
-		t.Fatalf("Transport: got %T, want *http.Transport", c.Transport)
+		t.Fatalf("Transport: got %T under the wrapper, want *http.Transport", c.Transport)
 	}
 	if tr.TLSClientConfig == nil || tr.TLSClientConfig.MinVersion != 0x0303 { // tls.VersionTLS12
 		t.Errorf("TLSClientConfig.MinVersion: got %v, want TLS1.2 (0x0303)", tr.TLSClientConfig)

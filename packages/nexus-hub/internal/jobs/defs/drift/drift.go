@@ -17,8 +17,8 @@ import (
 
 const (
 	driftJobID          = "config-drift-check"
-	driftJobName        = "Config Drift Detection"
-	driftJobDescription = "Detects Things whose reported config version differs from desired and triggers repair."
+	driftJobName        = "Config Out-of-Sync Detection"
+	driftJobDescription = "Detects nodes whose applied config version differs from the target config and triggers repair."
 	driftMaxRetries     = 3
 	driftRetryTTL       = 5 * time.Minute
 	driftKeyPrefix      = "nexus:drift:retry:"

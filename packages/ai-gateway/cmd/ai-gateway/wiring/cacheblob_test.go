@@ -8,17 +8,14 @@ import (
 )
 
 // TestProjectCacheBlobToNormaliserConfig_emptyBlob verifies a zero-value
-// blob with nil layer produces an empty Config. Fed to the engine this yields
-// hasWork=false — no rule, no marker inject, so the upstream rewrite no-ops.
+// blob produces an empty Config. Fed to the engine this yields hasWork=false —
+// no enabled rule, so the upstream rewrite no-ops.
 func TestProjectCacheBlobToNormaliserConfig_emptyBlob(t *testing.T) {
 	blob := cacheconfig.CacheConfigBlob{}
-	cfg := ProjectCacheBlobToNormaliserConfig(blob, nil)
+	cfg := ProjectCacheBlobToNormaliserConfig(blob)
 
 	if len(cfg.Rules) != 0 {
 		t.Errorf("expected empty Rules, got %v", cfg.Rules)
-	}
-	if len(cfg.Providers) != 0 {
-		t.Errorf("expected empty Providers, got %v", cfg.Providers)
 	}
 }
 
@@ -36,7 +33,7 @@ func TestProjectCacheBlobToNormaliserConfig_rulesProjected(t *testing.T) {
 			},
 		},
 	}
-	cfg := ProjectCacheBlobToNormaliserConfig(blob, nil)
+	cfg := ProjectCacheBlobToNormaliserConfig(blob)
 	adapterRules, ok := cfg.Rules["anthropic"]
 	if !ok {
 		t.Fatal("expected rules for anthropic adapter")
@@ -61,23 +58,9 @@ func TestProjectCacheBlobToNormaliserConfig_emptyAdapterRulesSkipped(t *testing.
 			"anthropic": {Rules: nil},
 		},
 	}
-	cfg := ProjectCacheBlobToNormaliserConfig(blob, nil)
+	cfg := ProjectCacheBlobToNormaliserConfig(blob)
 	if _, ok := cfg.Rules["anthropic"]; ok {
 		t.Error("expected anthropic with empty rules to be skipped")
-	}
-}
-
-// TestProjectCacheBlobToNormaliserConfig_nonAnthropicProvidersSkipped
-// verifies that non-anthropic/bedrock providers are not included in
-// cfg.Providers even when the layer returns them.
-func TestProjectCacheBlobToNormaliserConfig_nonAnthropicProvidersSkipped(t *testing.T) {
-	// Pass nil layer — providers section stays empty because layer==nil guard is hit.
-	blob := cacheconfig.CacheConfigBlob{
-		Adapters: map[string]cacheconfig.AdapterConfig{"gemini": {}},
-	}
-	cfg := ProjectCacheBlobToNormaliserConfig(blob, nil)
-	if len(cfg.Providers) != 0 {
-		t.Errorf("expected empty Providers when layer=nil, got %v", cfg.Providers)
 	}
 }
 
@@ -105,7 +88,7 @@ func TestProjectCacheBlobToNormaliserConfig_ruleOverrideFields(t *testing.T) {
 				},
 			},
 		}
-		cfg := ProjectCacheBlobToNormaliserConfig(blob, nil)
+		cfg := ProjectCacheBlobToNormaliserConfig(blob)
 		ro := cfg.Rules["bedrock"]["r"]
 		got := wirerewrite.RuleOverride{Enabled: ro.Enabled, DryRunAlways: ro.DryRunAlways}
 		gotEnabled := got.Enabled != nil && *got.Enabled

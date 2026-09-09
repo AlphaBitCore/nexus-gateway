@@ -13,14 +13,16 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
-	"github.com/goccy/go-json"
 	"io"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
+	"github.com/goccy/go-json"
+
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/oidcdisco"
+	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/httpclient"
 )
 
 // Result is the structured outcome of a probe. The HTTP handler renders
@@ -190,7 +192,7 @@ func Probe(ctx context.Context, idpType string, cfg map[string]any) (Result, err
 }
 
 func newClient(timeout time.Duration) *http.Client {
-	return &http.Client{Timeout: timeout}
+	return nexushttp.New(nexushttp.Config{Timeout: timeout, Caller: "idptest"})
 }
 
 // NewProbeResolver builds the discovery resolver the OIDC probe uses. It is an

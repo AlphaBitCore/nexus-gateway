@@ -173,12 +173,12 @@ func insertDiagDrainEvent(ctx context.Context, pool store.PgxPool, thingID, thin
 		s := evt.AgentVersion
 		agentVerPtr = &s
 	}
-	// trace_id mirror — same NULL-when-empty contract as the WS path's
-	// insertBatch, so admin queries can filter `WHERE trace_id IS NULL`
+	// external_request_id mirror — same NULL-when-empty contract as the WS
+	// path's insertBatch, so admin queries can filter `WHERE external_request_id IS NULL`
 	// regardless of which path (WS COPY vs HTTP drain INSERT) wrote the row.
 	var tracePtr *string
-	if evt.TraceID != "" {
-		s := evt.TraceID
+	if evt.ExternalRequestID != "" {
+		s := evt.ExternalRequestID
 		tracePtr = &s
 	}
 
@@ -190,7 +190,7 @@ func insertDiagDrainEvent(ctx context.Context, pool store.PgxPool, thingID, thin
 	const q = `
 		INSERT INTO thing_diag_event
 		    (id, thing_id, thing_type, occurred_at, received_at, level, event_type,
-		     source, message, message_hash, trace_id, attrs, stack_trace, repeat_count,
+		     source, message, message_hash, external_request_id, attrs, stack_trace, repeat_count,
 		     agent_version, os_info)
 		VALUES ($1, $2, $3, $4, NOW(), $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
 		ON CONFLICT (id) DO NOTHING

@@ -11,6 +11,8 @@ import (
 	"log/slog"
 	"testing"
 	"time"
+
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/cache/semantic/internal/testredis"
 )
 
 // NewCircuitBreaker — the constructor registers Prometheus metrics and must
@@ -267,9 +269,15 @@ func TestClient_DropIndex_ValkeyError(t *testing.T) {
 	}
 }
 
-// StoreEntry TTL=0 skips PEXPIRE
-
-func TestClient_StoreEntry_NoTTL(t *testing.T) {
+// StoreEntry refuses a TTL it cannot expire.
+//
+// Asserting that a zero TTL is written successfully — "PEXPIRE branch not
+// taken" — is the defect: the entry holds prompt and response text with no
+// expiry, so no retention job and no erasure request can reach it (those
+// operate on tables, not cache keys). The chat path hardcodes 24h and cannot
+// produce one, but the semantic-prewarm endpoint passes `ttlSeconds` straight
+// from the caller's JSON.
+func TestClient_StoreEntry_RefusesNonPositiveTTL(t *testing.T) {
 	c, cleanup := newTestClient(t)
 	defer cleanup()
 
@@ -278,15 +286,43 @@ func TestClient_StoreEntry_NoTTL(t *testing.T) {
 		t.Fatalf("EnsureIndex: %v", err)
 	}
 
+	for _, ttl := range []time.Duration{0, -time.Second} {
+		in := StoreInput{
+			EmbeddingInput: "no-ttl-input",
+			Embedding:      []float32{0.1, 0.2, 0.3, 0.4},
+			ResponseBody:   []byte(`{}`),
+			TTL:            ttl,
+		}
+		if err := c.StoreEntry(context.Background(), indexName, in, 0); err == nil {
+			t.Errorf("StoreEntry accepted TTL %v — the entry would never expire", ttl)
+		}
+	}
+}
+
+// The sibling: a positive TTL is written AND actually carries an expiry on the
+// key. Without this, "refuse everything" would satisfy the arm above.
+func TestClient_StoreEntry_PositiveTTLSetsAnExpiry(t *testing.T) {
+	_, rdb, mr, cleanup := testredis.NewMiniValkeyWithServer(t)
+	defer cleanup()
+	c := NewClient(rdb, slog.New(slog.NewTextHandler(io.Discard, nil)), "test", nil)
+
+	indexName := "cov-ttl-ok"
+	if err := c.EnsureIndex(context.Background(), indexName, 4); err != nil {
+		t.Fatalf("EnsureIndex: %v", err)
+	}
 	in := StoreInput{
-		EmbeddingInput: "no-ttl-input",
+		EmbeddingInput: "ttl-input",
 		Embedding:      []float32{0.1, 0.2, 0.3, 0.4},
 		ResponseBody:   []byte(`{}`),
-		TTL:            0, // zero TTL → PEXPIRE branch not taken
+		TTL:            time.Hour,
+	}
+	if err := c.StoreEntry(context.Background(), indexName, in, 0); err != nil {
+		t.Fatalf("StoreEntry: %v", err)
 	}
 
-	if err := c.StoreEntry(context.Background(), indexName, in, 0); err != nil {
-		t.Fatalf("StoreEntry with zero TTL: %v", err)
+	key := entryKey(indexName, in)
+	if ttl := mr.TTL(key); ttl <= 0 {
+		t.Errorf("the stored entry carries TTL %v — it would live forever", ttl)
 	}
 }
 
@@ -312,11 +348,25 @@ func TestIndexLifecycle_EnsureIndexFailureNotFatal(t *testing.T) {
 	}
 	lc.OnConfigSnapshot(context.Background(), snap)
 
-	// lastFingerprint must be updated even when EnsureIndex failed.
+	// The fingerprint must NOT be recorded when EnsureIndex failed. Asserting
+	// the opposite ("lastFingerprint must be updated even when EnsureIndex
+	// failed") is how the defect survives: a recorded fingerprint makes every
+	// later snapshot carrying it take the "unchanged; skipping" early return,
+	// so the index is never created and the L2 semantic cache stays dead for
+	// the lifetime of the process.
+	//
+	// The no-panic property this test is named for is also covered — reaching
+	// this line at all is the assertion.
 	lc.mu.Lock()
 	fp := lc.lastFingerprint
 	lc.mu.Unlock()
-	if fp != "fp-fail" {
-		t.Errorf("lastFingerprint = %q, want 'fp-fail'", fp)
+	if fp == "fp-fail" {
+		t.Errorf("lastFingerprint = %q after a failed EnsureIndex — the failure is now permanent", fp)
+	}
+
+	// ...and the snapshot still reached the hot path, which is the half that
+	// must survive an L2 failure.
+	if got := cache.Get(); got.Fingerprint != "fp-fail" {
+		t.Errorf("ConfigCache.Fingerprint = %q, want fp-fail", got.Fingerprint)
 	}
 }

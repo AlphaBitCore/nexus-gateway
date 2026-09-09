@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// These tests pin the C-14 / C-23 contract on the SSE parser's diagnostics.
+// These tests pin the contract on the SSE parser's diagnostics.
 //
 // compliance-proxy and agent are transparent MITM interceptors: they carry
 // arbitrary provider wires, and the SSE spec REQUIRES ignoring unrecognized
@@ -69,7 +69,7 @@ func TestSSEParser_UnknownField_ReportedOncePerStream(t *testing.T) {
 	}
 }
 
-// TestSSEParser_SeparatorlessLine_NeverLogsContent is the C-23 safety contract:
+// TestSSEParser_SeparatorlessLine_NeverLogsContent is the safety contract:
 // a line with no ':' must NOT have its content echoed into the log at any
 // level, because that content is remotely controlled and may carry user prompt
 // or model output.

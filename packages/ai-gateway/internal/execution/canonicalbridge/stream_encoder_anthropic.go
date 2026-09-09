@@ -3,6 +3,7 @@ package canonicalbridge
 import (
 	"bytes"
 	"context"
+	"strings"
 
 	"github.com/goccy/go-json"
 
@@ -35,6 +36,49 @@ type anthropicStreamEncoder struct {
 	// reported as 2717 input tokens — a client billing off the stream saw a
 	// free request.
 	lastUsage *normalize.Usage
+	// pendingReasoning buffers universal (unsigned) reasoning text until it is
+	// known whether a signed carrier will supersede it, and sawSignedThinking
+	// records that one did.
+	//
+	// Both are needed because the same thinking text reaches this encoder twice
+	// on the same-format path: the Anthropic decoder puts each thinking_delta on
+	// ReasoningDelta AND, when signature_delta closes the block, republishes the
+	// whole block through NexusThinking. Emitting both would send the reasoning
+	// twice. Emitting neither — which is what this encoder used to do for
+	// unsigned text — drops the reasoning entirely on a cross-format turn, where
+	// no signature ever arrives.
+	pendingReasoning  strings.Builder
+	sawSignedThinking bool
+}
+
+// flushUnsignedReasoning emits buffered universal reasoning as an Anthropic
+// thinking block, unless a signed carrier already carried it.
+//
+// The block is UNSIGNED, matching what the non-streaming egress already does
+// (specs/anthropic/ingress/hub_ingress.go): an Anthropic-shaped client that
+// cross-routed to gpt-5 or DeepSeek still sees the model's reasoning. That is a
+// different act from forging a signature on the REQUEST leg, which the request
+// codec rightly refuses — a fabricated signature would fail Anthropic's own
+// verification when the client replays the turn upstream. Here the block is
+// going to a client, and it carries no signature to be believed.
+//
+// Called at the point the stream reveals which case it is: Anthropic finishes a
+// thinking block (and its signature_delta) before any text or tool block opens,
+// so by the time non-reasoning content arrives, a signed carrier either came or
+// never will.
+func (e *anthropicStreamEncoder) flushUnsignedReasoning(buf *bytes.Buffer) {
+	if e.sawSignedThinking || e.pendingReasoning.Len() == 0 {
+		e.pendingReasoning.Reset()
+		return
+	}
+	text := e.pendingReasoning.String()
+	e.pendingReasoning.Reset()
+	idx := e.ensureBlock(buf, anthropicBlockThinking, -1, map[string]any{"type": "thinking", "thinking": ""})
+	writeAnthropicEvent(buf, "content_block_delta", map[string]any{
+		"type":  "content_block_delta",
+		"index": idx,
+		"delta": map[string]any{"type": "thinking_delta", "thinking": text},
+	})
 }
 
 type anthropicBlockKind uint8
@@ -158,9 +202,18 @@ func (e *anthropicStreamEncoder) Write(_ context.Context, chunk provcore.Chunk) 
 		writeAnthropicEvent(&buf, "ping", map[string]any{"type": "ping"})
 	}
 
-	// Provider-native thinking is replayed only from the signed opaque carrier.
-	// Universal ReasoningDelta without a carrier is deliberately not promoted
-	// into an unsigned Anthropic thinking block.
+	if chunk.ReasoningDelta != "" {
+		e.pendingReasoning.WriteString(chunk.ReasoningDelta)
+	}
+	if len(chunk.NexusThinking) > 0 {
+		// The signed carrier republishes the same text this stream already put
+		// on ReasoningDelta, so the buffer is dropped rather than emitted.
+		e.sawSignedThinking = true
+		e.pendingReasoning.Reset()
+	}
+
+	// Provider-native thinking is replayed from the signed opaque carrier; the
+	// unsigned buffer above covers the cross-format turn where none arrives.
 	for _, block := range chunk.NexusThinking {
 		if block.RedactedData != "" {
 			// Redacted blocks are complete in one chunk. Close any preceding
@@ -193,12 +246,28 @@ func (e *anthropicStreamEncoder) Write(_ context.Context, chunk provcore.Chunk) 
 
 	// Text follows provider-native thinking so buffered replay preserves the
 	// Anthropic assistant block order.
-	if chunk.Delta != "" {
+	// Any unsigned reasoning must land before the first text block: Anthropic
+	// orders thinking ahead of the answer, and a client rendering blocks in
+	// arrival order would otherwise show the reasoning after it.
+	if chunk.Delta != "" || chunk.RefusalDelta != "" || len(chunk.ToolCallDeltas) > 0 || chunk.Done {
+		e.flushUnsignedReasoning(&buf)
+	}
+
+	// A refusal joins the text block: Anthropic has no refusal channel, and
+	// dropping the decline would hand an Anthropic-shaped client an EMPTY
+	// assistant turn where the model actually refused. Unlike thinking — which
+	// this encoder deliberately will not synthesise without the provider's
+	// signature — a refusal IS ordinary prose on this wire; only its
+	// classification is lost, not its text.
+	for _, text := range [...]string{chunk.Delta, chunk.RefusalDelta} {
+		if text == "" {
+			continue
+		}
 		idx := e.ensureBlock(&buf, anthropicBlockText, 0, map[string]any{"type": "text", "text": ""})
 		writeAnthropicEvent(&buf, "content_block_delta", map[string]any{
 			"type":  "content_block_delta",
 			"index": idx,
-			"delta": map[string]any{"type": "text_delta", "text": chunk.Delta},
+			"delta": map[string]any{"type": "text_delta", "text": text},
 		})
 	}
 

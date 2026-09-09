@@ -12,10 +12,11 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"github.com/goccy/go-json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/goccy/go-json"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/auth/vkauth"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/store"

@@ -156,47 +156,112 @@ func chatChunkFromFrame(ev specutil.SSEEvent) provcore.Chunk {
 		NativeEvent: ev.Event,
 	}
 
+	// ONE walk of the frame, then one walk of each nested object it needs.
+	//
+	// gjson has no parse tree: every Get re-scans the raw bytes it is given, so
+	// `choice0.Get("delta.content")` followed by `choice0.Get("delta.refusal")`
+	// walks the delta object twice, and this function had grown to seven such
+	// reads plus two top-level ones — nine scans per frame, on the hottest
+	// application function in the streaming path (~15% of gateway CPU at 1000
+	// rps, essentially all of it inside gjson). Iterating keys instead reads
+	// each object once and dispatches on the key, which costs the same walk a
+	// single Get would and answers every field.
+	// GetBytes, not ParseBytes: gjson's ParseBytes copies the whole frame into a
+	// string, which showed up as ~50% more bytes per frame for the same alloc
+	// count — a real cost on a per-token path, traded for two top-level scans
+	// that are cheap because both keys sit late in the object either way.
+	//
+	// `choices.0` is the first ELEMENT, not choice number zero: an n>1 turn
+	// interleaves frames that each carry one choice, so the element's own
+	// `index` field below is what says which candidate this delta belongs to.
 	choice0 := gjson.GetBytes(ev.Data, "choices.0")
+	usage := gjson.GetBytes(ev.Data, "usage")
+
 	if choice0.Exists() {
-		if c := choice0.Get("delta.content"); c.Exists() {
-			chunk.Delta = c.String()
-		}
-		// reasoning_content carries chain-of-thought tokens emitted by
-		// thinking models (DeepSeek-R1/V4, Kimi K2, etc.) before the final
-		// answer. Route it to the dedicated ReasoningDelta channel — NOT
-		// Delta — so it stays separate from the answer through the canonical
-		// hub. Every cross-format stream encoder maps ReasoningDelta to the
-		// target's reasoning channel (Gemini `thought:true`, Anthropic
-		// `thinking_delta`, OpenAI `delta.reasoning_content`); appending to
-		// Delta instead leaked the chain-of-thought into the visible answer on
-		// every cross-format transcode. This matches the openai-responses
-		// stream decoder, which already routes reasoning to ReasoningDelta.
-		// Native openai-family passthrough is unaffected — it forwards the
-		// upstream RawBytes (which still carry reasoning_content), not Delta.
-		if rc := choice0.Get("delta.reasoning_content"); rc.Exists() && rc.String() != "" {
-			chunk.ReasoningDelta += rc.String()
-		}
-		if tools := choice0.Get("delta.tool_calls"); tools.IsArray() {
-			tools.ForEach(func(_, v gjson.Result) bool {
-				chunk.ToolCallDeltas = append(chunk.ToolCallDeltas, provcore.ToolCallDelta{
-					Index:     int(v.Get("index").Int()),
-					ID:        v.Get("id").String(),
-					Name:      v.Get("function.name").String(),
-					Arguments: v.Get("function.arguments").String(),
+		// reasoning_content is the channel thinking models (DeepSeek-R1/V4, Kimi
+		// K2) stream chain-of-thought on, and `reasoning` is the alternate wire
+		// name xAI and OpenRouter use for the same thing. Both are collected and
+		// the primary spelling wins, matching the shared normalize fold
+		// (openai_chat.go Delta.Reasoning) — summing both would double a
+		// transcript that carries the same text under two names.
+		var reasoningContent, reasoningAlias string
+		choice0.ForEach(func(key, value gjson.Result) bool {
+			switch key.Str {
+			case "index":
+				chunk.ChoiceIndex = int(value.Int())
+			case "finish_reason":
+				// Rides a trailing chunk (delta empty) and is already in the
+				// canonical OpenAI vocabulary (stop / length / tool_calls /
+				// content_filter). Surfaced so a re-encoder (buffer mode)
+				// preserves the real value instead of collapsing to "stop".
+				if value.Type == gjson.String && value.Str != "" {
+					chunk.FinishReason = value.Str
+				}
+			case "delta":
+				value.ForEach(func(dk, dv gjson.Result) bool {
+					switch dk.Str {
+					case "content":
+						chunk.Delta = dv.String()
+					case "reasoning_content":
+						reasoningContent = dv.String()
+					case "reasoning":
+						reasoningAlias = dv.String()
+					case "refusal":
+						// What a structured-outputs model streams INSTEAD of
+						// content when it declines. Every non-refusing chunk
+						// carries `"refusal":null`, so the type is checked
+						// rather than mere presence.
+						if dv.Type == gjson.String && dv.Str != "" {
+							chunk.RefusalDelta += dv.Str
+						}
+					case "tool_calls":
+						if !dv.IsArray() {
+							return true
+						}
+						dv.ForEach(func(_, tc gjson.Result) bool {
+							var d provcore.ToolCallDelta
+							tc.ForEach(func(tk, tv gjson.Result) bool {
+								switch tk.Str {
+								case "index":
+									d.Index = int(tv.Int())
+								case "id":
+									d.ID = tv.String()
+								case "function":
+									tv.ForEach(func(fk, fv gjson.Result) bool {
+										switch fk.Str {
+										case "name":
+											d.Name = fv.String()
+										case "arguments":
+											d.Arguments = fv.String()
+										}
+										return true
+									})
+								}
+								return true
+							})
+							chunk.ToolCallDeltas = append(chunk.ToolCallDeltas, d)
+							return true
+						})
+					}
+					return true
 				})
-				return true
-			})
-		}
-		// finish_reason rides a trailing chunk (delta empty) and is already in
-		// the canonical OpenAI vocabulary (stop / length / tool_calls /
-		// content_filter). Surface it on the canonical Chunk so a re-encoder
-		// (buffer mode) preserves the real value instead of collapsing to "stop".
-		if fr := choice0.Get("finish_reason"); fr.Type == gjson.String && fr.Str != "" {
-			chunk.FinishReason = fr.Str
+			}
+			return true
+		})
+		// Route reasoning to its own channel, NOT Delta: every cross-format
+		// encoder maps ReasoningDelta to the target's reasoning channel (Gemini
+		// `thought:true`, Anthropic `thinking_delta`, OpenAI
+		// `delta.reasoning_content`), and appending to Delta instead leaked the
+		// chain-of-thought into the visible answer on every transcode. Native
+		// openai-family passthrough is unaffected — it forwards RawBytes.
+		if reasoningContent != "" {
+			chunk.ReasoningDelta += reasoningContent
+		} else if reasoningAlias != "" {
+			chunk.ReasoningDelta += reasoningAlias
 		}
 	}
 
-	if usage := gjson.GetBytes(ev.Data, "usage"); usage.IsObject() {
+	if usage.IsObject() {
 		// Streaming Usage extraction via provcore.ExtractUsage (same parser
 		// path as the non-streaming codec, compliance proxy, agent, and Hub
 		// audit). The full SSE chunk JSON is passed; shared/normalize finds the

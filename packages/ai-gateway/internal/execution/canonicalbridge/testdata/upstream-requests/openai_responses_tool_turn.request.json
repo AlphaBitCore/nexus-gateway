@@ -1,0 +1,49 @@
+{
+  "model": "gpt-4o-mini",
+  "input": [
+    {
+      "type": "message",
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "weather in Paris? use the tool"
+        }
+      ]
+    },
+    {
+      "id": "fc_0401af30a959c032016a92d9907d6887d0bf729653417db81f",
+      "type": "function_call",
+      "status": "completed",
+      "arguments": "{\"city\":\"Paris\"}",
+      "call_id": "call_6XUExsi9xCoM0KmNlaAkhgoK",
+      "name": "get_weather"
+    },
+    {
+      "type": "function_call_output",
+      "call_id": "call_6XUExsi9xCoM0KmNlaAkhgoK",
+      "output": "{\"city\": \"Paris\", \"temp_c\": 18}"
+    }
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "name": "get_weather",
+      "description": "get weather",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "city": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "city"
+        ],
+        "additionalProperties": false
+      }
+    }
+  ],
+  "max_output_tokens": 600,
+  "store": false
+}

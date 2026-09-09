@@ -1,8 +1,9 @@
 package wiring
 
 import (
-	"github.com/goccy/go-json"
 	"testing"
+
+	"github.com/goccy/go-json"
 )
 
 func TestParseInvalidateIDs_empty(t *testing.T) {

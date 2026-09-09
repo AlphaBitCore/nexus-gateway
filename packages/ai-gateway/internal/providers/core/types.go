@@ -66,6 +66,22 @@ type CallTarget struct {
 	// that is knowable today.
 	Reasons bool
 
+	// PromptCacheMarkers: turn on this provider's upstream prompt caching by
+	// marking the request. Resolved per request from the operator's cache
+	// configuration — the adapter-family default, overridden per provider —
+	// so a codec can ask whether the caller in front of it wants caching
+	// without reaching for configuration itself.
+	//
+	// Only a codec whose wire HAS a marker acts on it; the rest ignore the
+	// field. That is what keeps the decision here instead of becoming a list
+	// of provider names at every site that handles a request body.
+	PromptCacheMarkers bool
+
+	// PromptCacheBoundary asks for a SECOND explicit breakpoint one turn behind
+	// the automatic one, for conversations that grow faster than the provider's
+	// backward search can follow. Meaningless unless PromptCacheMarkers is on.
+	PromptCacheBoundary bool
+
 	// Extras carries provider-specific configuration that doesn't fit in
 	// the universal fields above. Keys are dot-namespaced: "azure.apiVersion",
 	// "aws.accessKey", "gcp.serviceAccountJSON", etc.
@@ -187,6 +203,29 @@ type Chunk struct {
 	Delta          string          // text delta (assistant content), canonical UTF-8
 	ReasoningDelta string          // reasoning / thinking text (Anthropic thinking_delta, OpenAI / DeepSeek delta.reasoning_content). Kept separate from Delta so audit / hooks aggregate only assistant-visible content.
 	ToolCallDeltas []ToolCallDelta // partial tool call updates (OpenAI shape)
+	// RefusalDelta carries the structured-outputs refusal text a model streams
+	// on choices[].delta.refusal INSTEAD of content when it declines a request
+	// under a json_schema response_format. The canonical stream contract names
+	// this channel (canonicalbridge.CanonicalStreamChunkSubset), and it is
+	// assistant-VISIBLE output, so compliance scans it exactly like Delta.
+	//
+	// It stays separate from Delta because the re-encode has to put it back on
+	// delta.refusal: an SDK reading choices[].message.refusal to detect a
+	// declined request would otherwise find nothing while the refusal text
+	// arrived as the answer. Carrying it here is also what keeps the enforcing
+	// and cross-format lanes — which rebuild the wire from the canonical chunk
+	// rather than forwarding RawBytes — from dropping a real refusal outright.
+	RefusalDelta string
+	// ChoiceIndex is the choices[].index this chunk belongs to, and it is what
+	// makes an n>1 turn survive the canonical waist.
+	//
+	// A multi-candidate stream does NOT pack its choices into one frame — the
+	// provider interleaves frames that each carry a single choice, tagged by
+	// index. Without the tag the re-encode collapses every candidate onto choice
+	// 0: the text all arrives, attributed to one answer, and the per-candidate
+	// finish_reason arrives once instead of once each. Zero for the ordinary
+	// single-choice turn, so decoders that never saw n>1 are unaffected.
+	ChoiceIndex int
 	// NexusThinking carries a complete Anthropic thinking block only after its
 	// provider signature has arrived. It is an opaque exact-replay carrier;
 	// ordinary reasoning text is never enough to synthesize a native block.

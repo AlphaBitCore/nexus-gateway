@@ -12,10 +12,10 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/execution/canonicalbridge"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/store"
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
-	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/target"
+	provtarget "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/target"
 	routingcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
+	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/httpclient"
 	cfgpolicy "github.com/AlphaBitCore/nexus-gateway/packages/shared/schemas/configtypes/policy"
-	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 )
 
@@ -479,11 +479,11 @@ func (e *TargetExecutor) executeInner(
 				walk[tIdx].lastFailure = outcome.errCl
 			}
 			// Elimination is decided by the class, in one place. The arms below
-			// each act on their own class, and each used to set this flag for
-			// itself — so a class added to eliminatesTarget() would surface the
-			// upstream envelope (which reads the predicate) and never be
+			// each act on their own class; each setting this flag for
+			// itself means a class added to eliminatesTarget() surfaces the
+			// upstream envelope (which reads the predicate) and is never
 			// eliminated, leaving selectNext free to pick it again until the
-			// budget ran out.
+			// budget runs out.
 			if outcome.class.eliminatesTarget() {
 				walk[tIdx].eliminated = true
 			}

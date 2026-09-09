@@ -28,7 +28,7 @@ func TestInitForwardHeaderAllowlist_defaultConfigSucceeds(t *testing.T) {
 
 // TestNewResolver_nilLayerReturnsNil verifies nil layer short-circuits.
 func TestNewResolver_nilLayerReturnsNil(t *testing.T) {
-	r := NewResolver(nil, nil, nil)
+	r := NewResolver(nil, nil, nil, nil)
 	if r != nil {
 		t.Error("expected nil resolver when layer=nil")
 	}

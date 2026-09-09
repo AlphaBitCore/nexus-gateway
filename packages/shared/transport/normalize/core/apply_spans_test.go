@@ -105,7 +105,7 @@ func TestApplySpans_InjectAction(t *testing.T) {
 		}},
 	}
 	spans := []TransformSpan{{
-		Source:         SourceCacheControlInject,
+		Source:         SourceCacheNormaliser,
 		Action:         ActionInject,
 		ContentAddress: "messages.0.content.0",
 		Start:          5,

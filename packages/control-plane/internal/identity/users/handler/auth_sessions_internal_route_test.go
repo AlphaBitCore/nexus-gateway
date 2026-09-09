@@ -10,8 +10,8 @@ import (
 // TestRegisterInternalAuthRoutes_ExposesReplayWithoutIAM pins the ROUTE, which
 // is the thing that was wrong. The revocation checker holds the internal service
 // token and no IAM identity, so the replay endpoint has to exist on the
-// rstokenauth-gated internal group; it previously existed only on the admin
-// group behind admin:revocation.read, and the checker took a 401 on every poll.
+// rstokenauth-gated internal group. On the admin
+// group behind admin:revocation.read instead, the checker takes a 401 on every poll.
 //
 // The assertion is on the router's own table rather than on a handler call,
 // because a handler that works when invoked directly says nothing about whether

@@ -59,9 +59,8 @@ func TestOpenAIResponses_RequestShape(t *testing.T) {
 }
 
 func TestOpenAIResponses_ResponseWithReasoningAndMessage(t *testing.T) {
-	// Real prod-shape payload (from the smoke run's traffic_event_normalized
-	// row that originally fell back to Tier-3 generic-http — this test
-	// guards against that regression).
+	// Real prod-shape payload, from a smoke-run traffic_event_normalized row.
+	// This shape falls back to Tier-3 generic-http when no codec claims it.
 	body := []byte(`{
 	  "id": "resp_1778947540432927000",
 	  "object": "response",

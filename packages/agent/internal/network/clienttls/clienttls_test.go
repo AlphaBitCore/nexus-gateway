@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"testing"
 
-	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
+	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/httpclient"
 )
 
 type roundTripperFunc func(*http.Request) (*http.Response, error)

@@ -12,7 +12,7 @@ import (
 
 	defs "github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/jobs/defs"
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/observability/opsmetrics"
-	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/quota/rollup"
+	rollupstore "github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/quota/rollup"
 )
 
 // opsCascadeMode selects between fixed-duration (1d) and calendar-month (1mo)

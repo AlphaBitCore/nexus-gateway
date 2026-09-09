@@ -9,13 +9,13 @@ import os.log
 /// NSMenu instance whose delegate is this AppDelegate; AppKit calls
 /// `menuNeedsUpdate(_:)` immediately before showing the menu, which
 /// is where items get populated from the current ViewModel state.
-/// That pattern fixes two issues the first pass introduced:
+/// That pattern avoids two failures:
 ///
-///  1. The menu no longer rebuilds while the user is hovering an
-///     item. Previously a `viewModel.objectWillChange.sink`
-///     reassigned `statusItem.menu = newMenu` on every @Published
-///     write, which AppKit treats as "current menu was dismissed"
-///     and silently closed the menu mid-interaction.
+///  1. The menu does not rebuild while the user is hovering an
+///     item. A `viewModel.objectWillChange.sink` that
+///     reassigns `statusItem.menu = newMenu` on every @Published
+///     write is treated by AppKit as "current menu was dismissed"
+///     and silently closes the menu mid-interaction.
 ///  2. Icon updates are decoupled from menu updates. The icon
 ///     refreshes on every 2 s poll (so the tray reflects the
 ///     daemon's state within ~2 s even when the menu is closed),
@@ -182,12 +182,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         menu.addItem(statusRow(title: statusTitle, dotColor: statusColor))
 
-        // Version row was previously here but was removed as part
-        // of the menu IA cleanup. The daemon version is operator
-        // trivia for 99% of end users; it now lives on the Settings
-        // → About panel (Dashboard) where "did the update land"
-        // belongs alongside the auto-updater channel. See
-        // [[agent-ui-ia-redesign]] memory note.
+        // No version row here. The daemon version is operator
+        // trivia for 99% of end users; it lives on the Settings
+        // → About panel (Dashboard), where "did the update land"
+        // belongs alongside the auto-updater channel.
 
         // Update-available banner row. Surfaces only when the daemon
         // has detected a newer build on Hub (Updater's availability
@@ -304,10 +302,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         menu.addItem(.separator())
 
-        // Settings (the About panel was previously a separate menu
-        // item but now lives inside the Settings page on Dashboard —
-        // same place users go to change theme / language, so About
-        // is one click away without owning a top-level menu slot).
+        // Settings. The About panel lives inside the Settings page on
+        // Dashboard — the same place users go to change theme / language,
+        // so About is one click away without owning a top-level menu slot.
         menu.addItem(makeItem(
             title: String(localized: "menu.settings", bundle: .module),
             systemImage: "gearshape",
@@ -635,11 +632,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// `systemextensionsctl install`. The extension stays activated
     /// across host upgrades, so retrying the activation from a
     /// less-privileged binary fails — but the existing activation
-    /// is still fine, and `saveToPreferences` is what we actually
-    /// need next to wire the proxy config. Bailing on stage 1
-    /// failure was the latent first-boot bug that produced the
-    /// silent "agent enrolled, NE never connects, zero traffic
-    /// captured" state.
+    /// is still fine, and `saveToPreferences` is what is actually
+    /// needed next to wire the proxy config. Bailing on a stage 1
+    /// failure produces the silent "agent enrolled, NE never
+    /// connects, zero traffic captured" state on first boot.
     private func runNetworkExtensionInstall(userTriggered: Bool) {
         let appVersion = (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? ""
         SystemExtensionManager.shared.installIfNeeded { [weak self] result in

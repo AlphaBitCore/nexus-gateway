@@ -1,0 +1,24 @@
+{
+  "id": "d73a7eda-1f54-46c9-865b-2c4c97451c06",
+  "message": {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "text",
+        "text": "I'm sorry, I don't have access to a tool that can predict the weather."
+      }
+    ]
+  },
+  "finish_reason": "COMPLETE",
+  "usage": {
+    "billed_units": {
+      "input_tokens": 103,
+      "output_tokens": 18
+    },
+    "tokens": {
+      "input_tokens": 1893,
+      "output_tokens": 21
+    },
+    "cached_tokens": 992
+  }
+}

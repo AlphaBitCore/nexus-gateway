@@ -12,10 +12,23 @@ import (
 type addressedSegment struct {
 	address string
 	text    string
-	// blockType tags the flat ModifiedContent block. "text" for message /
-	// reasoning / tool-result text; "tool_use" for a tool-call argument leaf
-	// so the positional ModifiedContent consumers skip it and the structured
-	// TransformSpan carries the masking (R1/R5).
+	// blockType tags the flat ModifiedContent block, and the tag decides whether
+	// the block occupies a slot in the POSITIONAL index space that
+	// ModifiedContent's consumers walk.
+	//
+	// "text" for message, refusal and tool-result text — the channels a
+	// traffic.Adapter both extracts and rewrites, so a slot here lines up with a
+	// slot there.
+	//
+	// Anything else for a channel the flat adapters do not carry: "tool_use" for
+	// a tool-call argument leaf, "reasoning" for chain-of-thought. Those are
+	// scanned and addressed (their TransformSpan names the block directly and
+	// carries the masking), but they must NOT consume a positional slot — the
+	// adapter produces no segment for them, so a slot taken here is a slot the
+	// consumer never offers, and every assignment after it lands one early. The
+	// symptom is not an offset: the user is shown the model's redacted thinking
+	// where the answer should be, while the thinking keeps the value the policy
+	// just decided to mask.
 	blockType string
 }
 
@@ -28,16 +41,15 @@ func (pd *PiiDetector) collectRedactions(input *core.HookInput) ([]core.ContentB
 	if input.Normalized == nil {
 		return nil, nil
 	}
-	projOpts := pd.cfg.ProjectionOptions()
-	segments := input.TextSegmentsWith(projOpts)
+	segments := input.TextSegments()
 	if len(segments) == 0 {
 		return nil, nil
 	}
 
 	// Walk the Normalized payload in projection order so spans get the
-	// right content addresses. The walk mirrors the projection: reasoning
-	// blocks join only when the hook's scope opted in (IncludeReasoning),
-	// matching what TextSegmentsWith exposed above.
+	// right content addresses. The walk mirrors the projection, reasoning
+	// blocks included — anything the projection scanned must be addressable
+	// here, or a match would be found and then have nowhere to be masked.
 	addressed := make([]addressedSegment, 0, len(segments))
 	// KindAIEmbedding payloads carry text in Inputs (not Messages).
 	// Address each input as "inputs.<index>" so span tracking is accurate.
@@ -61,12 +73,26 @@ func (pd *PiiDetector) collectRedactions(input *core.HookInput) ([]core.ContentB
 						text:      b.Text,
 						blockType: "text",
 					})
-				case normalize.ContentReasoning:
-					if projOpts.IncludeReasoning && b.Text != "" {
+				case normalize.ContentRefusal:
+					// A refusal IS assistant-visible content on the wire
+					// (choices[].message.refusal), and the traffic adapters both
+					// extract and rewrite it — so it holds a positional slot.
+					if b.Text != "" {
 						addressed = append(addressed, addressedSegment{
 							address:   fmt.Sprintf("messages.%d.content.%d", mi, ci),
 							text:      b.Text,
 							blockType: "text",
+						})
+					}
+				case normalize.ContentReasoning:
+					// Scanned and addressed, but not positional: the adapters put
+					// chain-of-thought on ReasoningSegments and the rewrite path
+					// walks Segments only, so there is no slot to line up with.
+					if b.Text != "" {
+						addressed = append(addressed, addressedSegment{
+							address:   fmt.Sprintf("messages.%d.content.%d", mi, ci),
+							text:      b.Text,
+							blockType: "reasoning",
 						})
 					}
 				case normalize.ContentToolResult:

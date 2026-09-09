@@ -32,6 +32,8 @@ import (
 	"time"
 
 	"github.com/goccy/go-json"
+
+	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/httpclient"
 )
 
 // Default cache windows. Positive entries refresh lazily after RefreshTTL —
@@ -91,7 +93,7 @@ func New(hubURL, token string, opts ...Option) *Resolver {
 	r := &Resolver{
 		hubURL:      strings.TrimRight(hubURL, "/"),
 		token:       token,
-		client:      &http.Client{Timeout: 5 * time.Second},
+		client:      nexushttp.New(nexushttp.Config{Timeout: 5 * time.Second, Caller: "peerurl"}),
 		refreshTTL:  DefaultRefreshTTL,
 		negativeTTL: DefaultNegativeTTL,
 		cache:       map[string]*entry{},

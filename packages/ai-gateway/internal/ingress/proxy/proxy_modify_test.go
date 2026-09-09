@@ -123,8 +123,8 @@ func TestRunRequestHooks_Modify_RewritesBody(t *testing.T) {
 // AND an always-on soft-block hook, both at Stage "request". The pipeline aggregator
 // ranks BlockSoft above Modify (StrictestDecision), so the resolved Decision is
 // BLOCK_SOFT while the redact's ModifiedContent/TransformSpans ride along — exactly the
-// co-firing shape that gated on Decision==Modify would have forwarded UNREDACTED upstream
-// before #13. softBlockHook is the package-level impl shared with the response harness.
+// co-firing shape a gate keyed on Decision==Modify forwards UNREDACTED upstream.
+// softBlockHook is the package-level impl shared with the response harness.
 func newBlockSoftPlusRedactRequestHookCache(t *testing.T) *compliance.HookConfigCache {
 	t.Helper()
 	reg := builtins.Registry.Clone()
@@ -160,10 +160,10 @@ func newBlockSoftPlusRedactRequestHookCache(t *testing.T) *compliance.HookConfig
 	return cache
 }
 
-// TestRunRequestHooks_BlockSoftMaskedRedact_RedactsRequestBody pins #13 leak #4 (ai-gateway
-// request side): when a redact hook co-fires with a soft-block hook, the aggregate Decision
-// is BLOCK_SOFT, so the pre-#13 gate `Decision==Modify` skipped the rewrite and forwarded the
-// ORIGINAL request body upstream. The gate now keys on CarriesRedaction(), so the body is
+// TestRunRequestHooks_BlockSoftMaskedRedact_RedactsRequestBody pins the request-side
+// leak: when a redact hook co-fires with a soft-block hook, the aggregate Decision
+// is BLOCK_SOFT, so a gate keyed on `Decision==Modify` skips the rewrite and forwards the
+// ORIGINAL request body upstream. Keying on CarriesRedaction() instead, the body is
 // redacted; the audit DISPOSITION is stamped Action=redact (not the BlockSoft ceiling) and the
 // redacted wire copy reaches RequestBodyRedacted. This asserts the unit-level contract; the
 // end-to-end "upstream never sees the original" evidence is in stage_hooks_test.go.
@@ -213,7 +213,7 @@ func TestRunRequestHooks_BlockSoftMaskedRedact_RedactsRequestBody(t *testing.T) 
 	}
 }
 
-// TestRunRequestHooks_StandaloneBlockSoft_Refuses pins the #15 fold-to-block fix on the
+// TestRunRequestHooks_StandaloneBlockSoft_Refuses pins the fold-to-block rule on the
 // ai-gateway request stage: a standalone soft-block (no co-firing redact) carries no
 // applicable redaction, so ActionFromDecision folds it to the block action and the request
 // is REFUSED (403, rejected=true), never forwarded. Before the fix the refuse arm keyed on

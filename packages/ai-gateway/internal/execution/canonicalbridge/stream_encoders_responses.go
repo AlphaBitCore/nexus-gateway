@@ -247,6 +247,26 @@ func (e *responsesStreamEncoder) Write(_ context.Context, chunk provcore.Chunk) 
 		})
 	}
 
+	// A refusal rides its own event on this wire, exactly as it rides its own
+	// content part in the non-stream encoding — which already emitted it while
+	// this side did not, so the same turn reached a /v1/responses client
+	// complete when buffered and missing its decline when streamed. It shares
+	// the message item with the answer text because the two never co-occur: a
+	// refusal replaces content rather than joining it.
+	if chunk.RefusalDelta != "" {
+		if e.currentItem != "message" {
+			if e.currentItem != "" {
+				e.closeCurrentItem(&buf)
+			}
+			e.openItem(&buf, "message")
+		}
+		e.writeEvent(&buf, "response.refusal.delta", map[string]any{
+			"output_index":  e.outputIndex,
+			"content_index": e.messageContentIndex,
+			"delta":         chunk.RefusalDelta,
+		})
+	}
+
 	// Tool call deltas: each tool call lives in its own function_call item
 	// (Responses-API emits one output_item per tool call). We close any
 	// currently-open non-function_call item before starting a function_call.

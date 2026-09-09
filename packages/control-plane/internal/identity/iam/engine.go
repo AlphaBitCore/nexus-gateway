@@ -139,7 +139,7 @@ func (e *Engine) EvaluateMulti(ctx context.Context, principalType, principalID, 
 	}
 	// Backfill nexus:CurrentTime centrally so Date-conditioned
 	// statements (DateLessThan/DateGreaterThan) evaluate against the real wall
-	// clock. Call sites that left it empty/unset previously made every
+	// clock. A call site that leaves it empty/unset makes every
 	// time-windowed Deny silently fail-open (an empty actual fails time.Parse →
 	// the Date condition is false → the Deny never matches). A caller that sets
 	// an explicit value keeps it.

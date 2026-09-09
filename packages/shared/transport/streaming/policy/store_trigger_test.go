@@ -8,9 +8,8 @@ import (
 	policy "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/streaming/policy"
 )
 
-// TestApplyShadowState_EmptyTriggerNeverResetsState is the regression guard for
-// R-7, which disabled stream inspection on the compliance proxy in production
-// shape.
+// TestApplyShadowState_EmptyTriggerNeverResetsState is the regression guard against
+// stream inspection being disabled on the compliance proxy in production shape.
 //
 // streaming_compliance is a Type-B key in configkey.go — "invalidation trigger —
 // state stays null/{}" — so the Hub pushes JSON null on EVERY push. The receiver

@@ -15,8 +15,8 @@ import (
 
 // RegisterDSARRoutes registers DSAR (Data Subject Access Request) routes.
 // All DSAR mutations gate on the canonical admin:dsar.<verb> action — see
-// shared/iam.Catalog "dsar" row. Previously the writes shared the read-only
-// admin:audit-log.read gate, which let any read-only viewer fulfill DSARs.
+// shared/iam.Catalog "dsar" row. Sharing the read-only
+// admin:audit-log.read gate would let any read-only viewer fulfil DSARs.
 func (h *Handler) RegisterDSARRoutes(g *echo.Group, iamMW func(action string) echo.MiddlewareFunc) {
 	g.GET("/dsar", h.ListDSAR, iamMW(iam.ResourceDSAR.Action(iam.VerbRead)))
 	g.POST("/dsar", h.CreateDSAR, iamMW(iam.ResourceDSAR.Action(iam.VerbCreate)))

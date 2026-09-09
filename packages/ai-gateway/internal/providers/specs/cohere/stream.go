@@ -79,6 +79,25 @@ func (s *streamSession) Next(ctx context.Context) (provcore.Chunk, error) {
 
 	switch t {
 	case "content-delta":
+		// A reasoning model opens TWO content blocks — one `thinking`, one
+		// `text` — and a delta carries whichever field its block owns. Reading
+		// only `text` dropped every thinking delta on the floor: not merely
+		// absent from the egress, but never in the canonical chunk at all, so
+		// response hooks could not scan the model's reasoning either. The
+		// chat-stream reference lists neither block, which is why this is keyed
+		// off a captured command-a-reasoning stream rather than the docs.
+		if thinking := gjson.GetBytes(ev.Data, "delta.message.content.thinking").Str; thinking != "" {
+			chunk.ReasoningDelta = thinking
+			chunk.RawBytes = canonicalDeltaSSE(map[string]any{
+				"choices": []any{
+					map[string]any{
+						"index": 0,
+						"delta": map[string]any{"reasoning_content": thinking},
+					},
+				},
+			})
+			break
+		}
 		text := gjson.GetBytes(ev.Data, "delta.message.content.text").Str
 		chunk.Delta = text
 		chunk.RawBytes = canonicalDeltaSSE(map[string]any{
@@ -105,7 +124,23 @@ func (s *streamSession) Next(ctx context.Context) (provcore.Chunk, error) {
 		// Per Cohere, the delta.message.tool_calls is either an array
 		// (start) or wraps the partial-arguments shape. Walk it.
 		var oaiToolCalls []map[string]any
-		gjson.GetBytes(ev.Data, "delta.message.tool_calls").ForEach(func(_, tc gjson.Result) bool {
+		// tool_calls is a single OBJECT on this wire, not an array:
+		//   {"id":"…","type":"function","function":{"name":"…","arguments":"…"}}
+		// Iterating it as an array walked the object's VALUES instead, so
+		// `function.name` resolved against a bare string on every pass and every
+		// Cohere tool call reached the canonical chunk with no name and no
+		// arguments — the model asked to call a tool and the client received
+		// nothing it could dispatch. Wrapping a non-array in a one-element
+		// sequence keeps the array form working if the wire ever sends one.
+		toolCalls := gjson.GetBytes(ev.Data, "delta.message.tool_calls")
+		seq := []gjson.Result{toolCalls}
+		if toolCalls.IsArray() {
+			seq = toolCalls.Array()
+		}
+		for _, tc := range seq {
+			if !tc.IsObject() {
+				continue
+			}
 			d := provcore.ToolCallDelta{
 				Index:     idx,
 				ID:        tc.Get("id").Str,
@@ -131,8 +166,7 @@ func (s *streamSession) Next(ctx context.Context) (provcore.Chunk, error) {
 				oaiTC["type"] = "function"
 			}
 			oaiToolCalls = append(oaiToolCalls, oaiTC)
-			return true
-		})
+		}
 		chunk.RawBytes = canonicalDeltaSSE(map[string]any{
 			"choices": []any{
 				map[string]any{

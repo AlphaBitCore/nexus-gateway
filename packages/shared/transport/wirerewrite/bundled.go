@@ -14,7 +14,7 @@ const (
 // cloned and merged with operator config overrides on every Engine reload.
 //
 // Only surgical, opt-in strip rules ship here: each removes a single known
-// volatile token (a billing nonce) from a precise body path via regex, so the
+// volatile token (a billing nonce) from precise body paths via regex, so the
 // forwarded request stays byte-identical to the client's intent apart from that
 // one token. Whole-body re-serialisation (e.g. JSON field-order canonicalisation)
 // is intentionally NOT offered: re-encoding the client's body to stabilise a
@@ -35,7 +35,7 @@ func bundledRules() []Rule {
 			Type:             RuleTypeStrip,
 			EnabledByDefault: false,
 			KeyNormalizeSafe: true,
-			BodyPath:         "system.#.text",
+			BodyPaths:        []string{"system.#.text", "system"},
 			Regex:            cchRe,
 		},
 		{
@@ -47,7 +47,7 @@ func bundledRules() []Rule {
 			Type:             RuleTypeStrip,
 			EnabledByDefault: false,
 			KeyNormalizeSafe: true,
-			BodyPath:         "system.#.text",
+			BodyPaths:        []string{"system.#.text", "system"},
 			Regex:            cchRe,
 		},
 	}

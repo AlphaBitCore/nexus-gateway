@@ -363,7 +363,7 @@ func TestRun_BumpConnection_PinningError_FailOpen_StillPassesThrough(t *testing.
 	// wait for the Run goroutine to exit before the test returns: it reads the
 	// package-level bumpConnFn seam (and the metrics counter), which withBumpFn's
 	// t.Cleanup restores — a leaked goroutine racing that restore is the -race
-	// failure this test originally exhibited.
+	// failure.
 	client.Close()
 	<-done
 }
@@ -417,7 +417,7 @@ func TestRun_BumpConnection_PinningError_UnmatchedHost_PassesThrough(t *testing.
 	}
 	// Wait for the Run goroutine to exit before returning (see FailOpen test):
 	// it reads the bumpConnFn seam that withBumpFn's t.Cleanup restores; a leaked
-	// goroutine racing that restore is the -race failure.
+	// goroutine racing that restore is the -race failure this seam invites.
 	client.Close()
 	<-done
 }

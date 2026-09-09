@@ -462,16 +462,15 @@ func TestRulePackEngine_Close_ReleasesMatcher(t *testing.T) {
 	}
 }
 
-// TestRulePackEngine_Redact_ReasoningScope covers the ContentReasoning address
-// branch: with scope=include_reasoning a redact match inside a reasoning block is
-// masked at its message/content address.
-func TestRulePackEngine_Redact_ReasoningScope(t *testing.T) {
+// TestRulePackEngine_Redact_Reasoning covers the ContentReasoning address
+// branch: a redact match inside a reasoning block is masked at its
+// message/content address, like any other delivered text.
+func TestRulePackEngine_Redact_Reasoning(t *testing.T) {
 	cfg := buildEngineConfig([]rulePackInstall{{
 		InstallID: "i", PackName: "p", PackVersion: "v", Enabled: true,
 		Rules: []rulePackRule{{RuleID: "ssn", Severity: "hard", Pattern: `\b\d{3}-\d{2}-\d{4}\b`}},
 	}})
 	cfg.Config["onMatch"] = map[string]any{"action": "redact"}
-	cfg.Scope = "include_reasoning"
 	h, err := NewRulePackEngine(cfg)
 	if err != nil {
 		t.Fatalf("NewRulePackEngine: %v", err)
@@ -487,7 +486,7 @@ func TestRulePackEngine_Redact_ReasoningScope(t *testing.T) {
 		t.Fatalf("Execute: %v", err)
 	}
 	if len(res.TransformSpans) != 1 || res.TransformSpans[0].ContentAddress != "messages.0.content.0" {
-		t.Fatalf("reasoning redact (include_reasoning) should mask at messages.0.content.0; got %+v", res.TransformSpans)
+		t.Fatalf("a reasoning redact should mask at messages.0.content.0; got %+v", res.TransformSpans)
 	}
 }
 

@@ -122,11 +122,11 @@ func TestOIDCCallback_ValidCookie_Success(t *testing.T) {
 	fx.deps.StateSigner = signer
 
 	expectGetByID(fx.mock, fx.idpID, fx.cfgJSON, false)
-	fx.mock.ExpectQuery(`SELECT id, "userId", "idpId"`).
+	fx.mock.ExpectQuery(`u\.status, u\."disabledAt"`).
 		WithArgs(fx.idpID, fx.subject).
 		WillReturnRows(pgxmock.NewRows([]string{
-			"id", "userId", "idpId", "externalSubject", "externalEmail", "rawClaims", "linkedAt", "lastLoginAt",
-		}).AddRow("fi-1", "user-real", fx.idpID, fx.subject, ptrStr("alice@example.com"), []byte(`{}`), time.Now(), (*time.Time)(nil)))
+			"id", "userId", "idpId", "externalSubject", "externalEmail", "rawClaims", "linkedAt", "lastLoginAt", "status", "disabledAt",
+		}).AddRow("fi-1", "user-real", fx.idpID, fx.subject, ptrStr("alice@example.com"), []byte(`{}`), time.Now(), (*time.Time)(nil), "active", (*time.Time)(nil)))
 	fx.mock.ExpectExec(`UPDATE "UserFederatedIdentity" SET "rawClaims"`).
 		WithArgs("fi-1", pgxmock.AnyArg()).
 		WillReturnResult(pgxmock.NewResult("UPDATE", 1))

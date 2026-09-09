@@ -38,7 +38,8 @@ func TestCacheHitNonStream_DoesNotReplayTheNamespace(t *testing.T) {
 		BodyFormat: provcore.FormatOpenAI,
 	}
 	prepReq.Target.ProviderModelID = "gpt-4o"
-	finalBody, _, _, err := adapter.PrepareBody(prepReq)
+	finalBodyPrep, err := adapter.PrepareBody(prepReq)
+	finalBody, _, _ := finalBodyPrep.Body, finalBodyPrep.Rewrites, finalBodyPrep.URLOverride
 	if err != nil {
 		t.Fatalf("PrepareBody: %v", err)
 	}

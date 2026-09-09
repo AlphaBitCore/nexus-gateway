@@ -1,0 +1,10 @@
+{
+  "model": "command-a-reasoning-08-2025",
+  "stream": true,
+  "messages": [
+    {
+      "role": "user",
+      "content": "A farmer has 17 sheep, all but 9 run away. How many are left? Think carefully."
+    }
+  ]
+}

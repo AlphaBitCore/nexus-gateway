@@ -8,6 +8,7 @@ import (
 
 	auth "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/authn"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/authserver/idp"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/authserver/store"
 )
 
 // fakeLookup implements idp.UserLookup for unit tests. users is keyed by
@@ -17,22 +18,32 @@ type fakeLookup struct {
 }
 
 type fakeUser struct {
-	id         string
-	pwdHash    string
-	source     string // "local" | "oidc" | "scim"; empty defaults to "local"
+	id      string
+	pwdHash string
+	source  string // "local" | "oidc" | "scim"; empty defaults to "local"
+	// status and disabledAt are the two NexusUser columns that express "this
+	// account is switched off". The fake carries BOTH and resolves them the way
+	// the real store does, because the defect this package's disabled test was
+	// meant to catch was precisely that the two disagreed: every disable
+	// surface writes status, and disabledAt has no writer at all.
+	status     string // "" defaults to store.StatusActive, mirroring the DB default
 	disabledAt *time.Time
 }
 
-func (f fakeLookup) GetByEmail(_ context.Context, email string) (string, string, string, *time.Time, error) {
+func (f fakeLookup) GetByEmail(_ context.Context, email string) (string, string, string, store.AuthDisposition, error) {
 	u, ok := f.users[email]
 	if !ok {
-		return "", "", "", nil, errors.New("user not found")
+		return "", "", "", store.AuthDisposition{}, errors.New("user not found")
 	}
 	source := u.source
 	if source == "" {
 		source = "local" // mirror the NexusUser.source DB default
 	}
-	return u.id, u.pwdHash, source, u.disabledAt, nil
+	status := u.status
+	if status == "" {
+		status = store.StatusActive // mirror the NexusUser.status DB default
+	}
+	return u.id, u.pwdHash, source, store.NewAuthDisposition(status, u.disabledAt), nil
 }
 
 const localIdPID = "00000000-0000-0000-0000-000000000001"
@@ -139,6 +150,47 @@ func TestLocal_Authenticate_Disabled(t *testing.T) {
 	})
 	if !errors.Is(err, idp.ErrInvalidCredentials) {
 		t.Fatalf("expected ErrInvalidCredentials (no disabled-account enumeration), got %v", err)
+	}
+}
+
+// TestLocal_Authenticate_SuspendedStatus is the arm the disabledAt test above
+// could never reach, and it is the one that matches production. Every surface
+// that disables an account — the admin PUT, offboarding, agent-user suspend,
+// SCIM active:false — writes status='suspended' and leaves disabledAt NULL, so
+// a login gate keyed on disabledAt alone admits a suspended user with their
+// correct password. The refusal is the same generic error, for the same
+// anti-enumeration reason as the sibling above.
+func TestLocal_Authenticate_SuspendedStatus(t *testing.T) {
+	lookup := fakeLookup{users: map[string]fakeUser{
+		"alice@corp.com": {id: "usr_1", pwdHash: mustHash(t, "hunter2"), status: "suspended"},
+	}}
+	l := idp.NewLocal(lookup, localIdPID)
+
+	_, err := l.Authenticate(context.Background(), map[string]string{
+		"email":    "alice@corp.com",
+		"password": "hunter2",
+	})
+	if !errors.Is(err, idp.ErrInvalidCredentials) {
+		t.Fatalf("a suspended account authenticated with its correct password; got err=%v", err)
+	}
+}
+
+// TestLocal_Authenticate_UnknownStatusFailsClosed pins the direction of the
+// check. status is compared against the one value that permits login rather
+// than against a list of denied ones, so a value nobody has thought of yet
+// (a new lifecycle state, a typo written by hand) refuses instead of admitting.
+func TestLocal_Authenticate_UnknownStatusFailsClosed(t *testing.T) {
+	lookup := fakeLookup{users: map[string]fakeUser{
+		"alice@corp.com": {id: "usr_1", pwdHash: mustHash(t, "hunter2"), status: "deactivated"},
+	}}
+	l := idp.NewLocal(lookup, localIdPID)
+
+	_, err := l.Authenticate(context.Background(), map[string]string{
+		"email":    "alice@corp.com",
+		"password": "hunter2",
+	})
+	if !errors.Is(err, idp.ErrInvalidCredentials) {
+		t.Fatalf("an account outside the active status authenticated; got err=%v", err)
 	}
 }
 

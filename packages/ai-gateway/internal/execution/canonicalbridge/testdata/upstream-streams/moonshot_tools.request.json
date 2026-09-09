@@ -1,0 +1,31 @@
+{
+  "model": "moonshot-v1-8k",
+  "stream": true,
+  "max_tokens": 60,
+  "messages": [
+    {
+      "role": "user",
+      "content": "weather in Paris? use the tool"
+    }
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "get_weather",
+        "description": "get weather",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "city": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "city"
+          ]
+        }
+      }
+    }
+  ]
+}

@@ -40,15 +40,13 @@ func (c *BufferConfig) withDefaults() BufferConfig {
 // hooks see the real claim — before BufferPipeline.Process kicks off
 // the hook executor.
 //
-// It stamps ci.Normalized and nothing else. This comment used to list a
-// second effect, "auditInfo.ResponseNormalized — so the audit row carries
-// it", which was never true here: no production caller passes
-// responseprehook's OnPayload, and nothing under
-// shared/transport/streaming assigns that field. Without
-// this, hooks always saw a flat-text Normalized (built from
-// extractDeltaText concat in buildCheckpointInput), which kept the
-// admin hook ecosystem from acting on adapter-specific structure
-// (model name, tool calls, reasoning segments) for buffer mode.
+// It stamps ci.Normalized and nothing else — in particular NOT
+// auditInfo.ResponseNormalized: no production caller passes responseprehook's
+// OnPayload, and nothing under shared/transport/streaming assigns that field.
+// Without the callback, hooks see a flat-text Normalized (built from the
+// extractDeltaText concat in buildCheckpointInput), which keeps the admin hook
+// ecosystem from acting on adapter-specific structure (model name, tool calls,
+// reasoning segments) for buffer mode.
 type PreHookCallback = core.PreHookCallback
 
 // BufferPipeline buffers the entire SSE stream, runs hooks on the full content,

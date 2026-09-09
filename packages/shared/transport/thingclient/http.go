@@ -4,14 +4,15 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
 	"time"
 
-	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
+	"github.com/goccy/go-json"
+
+	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/httpclient"
 )
 
 // httpClient wraps net/http.Client with Hub-specific auth and base URL.

@@ -123,3 +123,44 @@ func TestVectorscan_ScanComplete_ReportsCompletion(t *testing.T) {
 		t.Errorf("empty-segment scan: want (no hits, complete); got (%v, %v)", h2, c2)
 	}
 }
+
+// TestVectorscan_ScanComplete_ClosedMatcherReportsIncomplete is the fail-unsafe
+// arm. ScanComplete's own contract says the redaction path MUST treat
+// complete=false as unsafe, because a dropped hit is unmasked PII — and the
+// closed-matcher early return must not hand back (nil, true), which claims
+// "scanned to completion, zero matches" for a scan that never touched the
+// database.
+//
+// The window is a rule-pack swap closing the old matcher while an in-flight
+// request still holds it, which is precisely when a redact hook is running.
+//
+// The assertion is on the VERDICT, not on the hit slice: an empty hit list is
+// what both a clean scan and a skipped scan look like, so the boolean is the
+// only thing that separates "nothing to mask" from "we did not look".
+func TestVectorscan_ScanComplete_ClosedMatcherReportsIncomplete(t *testing.T) {
+	m, bad := CompileVectorscan([]Pattern{{ID: 0, Expr: `AKIA[0-9A-Z]{16}`}})
+	if len(bad) != 0 {
+		t.Fatalf("unexpected bad patterns: %+v", bad)
+	}
+	cs, ok := m.(CompleteScanner)
+	if !ok {
+		t.Fatal("vectorscan matcher must implement CompleteScanner")
+	}
+
+	// Text that WOULD match, so a false "complete" cannot be excused as an
+	// honestly empty result.
+	const secretText = "creds AKIA1234567890ABCDEF"
+	if _, complete := cs.ScanComplete([]string{secretText}, false); !complete {
+		t.Fatal("precondition: an open matcher must report complete=true")
+	}
+
+	m.(*vectorscanMatcher).Close()
+
+	hits, complete := cs.ScanComplete([]string{secretText}, false)
+	if complete {
+		t.Fatalf("a closed matcher reported a completed scan; the redact path would treat %d hits as the whole truth and ship the PII unmasked", len(hits))
+	}
+	if len(hits) != 0 {
+		t.Errorf("a closed matcher must return no hits; got %+v", hits)
+	}
+}

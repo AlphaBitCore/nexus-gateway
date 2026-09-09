@@ -219,10 +219,10 @@ func TestInitHealthHandler_SpillSourceRegisteredWithNoBackend(t *testing.T) {
 	}
 }
 
-// The spill posture must be reported even when audit is disabled. It used to be
-// computed inside the audit branch, so a node with a real backend configured but
-// audit off served an empty `effect` from the storage.spill source — the operator
-// got a field with no explanation in it, which is worse than the field being
+// The spill posture must be reported even when audit is disabled.
+// Computed inside the audit branch, a node with a real backend configured but
+// audit off serves an empty `effect` from the storage.spill source — the operator
+// gets a field with no explanation in it, which is worse than the field being
 // absent because it reads as "nothing to say".
 func TestInitCompliance_DescribesSpillEvenWithAuditDisabled(t *testing.T) {
 	av := spillfactory.Describe(spillfactory.FactoryConfig{}, nil)

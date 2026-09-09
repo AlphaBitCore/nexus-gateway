@@ -55,6 +55,16 @@ func OpenAIChatCompletionToGenerateContentResponse(openaiBody []byte) ([]byte, e
 	if text != "" {
 		parts = append([]map[string]any{{"text": text}}, parts...)
 	}
+	// A structured-outputs decline arrives on message.refusal INSTEAD of
+	// content, and Gemini has no refusal channel. It rides an ordinary text part
+	// so the caller sees the decline: dropping it hands a Gemini-shaped client an
+	// EMPTY candidate where the model actually refused. Smart routing makes the
+	// pair ordinary — the caller asked for a model and the router picked an
+	// OpenAI-family provider. Appended after the answer text for the same reason
+	// the two never co-occur: a refusal replaces content rather than joining it.
+	if refusal := msg.Get("refusal").String(); refusal != "" {
+		parts = append(parts, map[string]any{"text": refusal})
+	}
 	// Cross-format reasoning preservation: canonical reasoning_content
 	// → Gemini `{text:"...", thought:true}` part. Matches the L1→L2
 	// forward path that already collects Gemini `thought:true` parts

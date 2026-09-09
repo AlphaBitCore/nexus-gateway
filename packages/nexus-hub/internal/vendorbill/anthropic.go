@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
+	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/httpclient"
 )
 
 const (

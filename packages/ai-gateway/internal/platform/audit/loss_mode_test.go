@@ -350,14 +350,14 @@ func TestAppendPoisonFile_WritesLine(t *testing.T) {
 	}
 }
 
-// TestWriter_SpillRecord_NoSpoolIsLoudNotJustCounted guards finding L-7.
+// TestWriter_SpillRecord_NoSpoolIsLoudNotJustCounted keeps the nil-spool arm loud.
 //
-// spillRecord's nil-spool arm incremented the drop counter and returned, with no
-// log of any kind — while the arm right below it (a spool that exists but fails
-// to write) has always logged a throttled WARN. So the ONE place a no-loss mode
-// still loses a record was the quietest path in the writer: an operator saw a
-// counter move and had nothing anywhere telling them why or what to change. The
-// callers reaching this arm even describe it as "never a drop".
+// Incrementing the drop counter and returning with no log of any kind — while the
+// arm right below it (a spool that exists but fails to write) logs a throttled
+// WARN — makes the ONE place a no-loss mode still loses a record the quietest path
+// in the writer: an operator sees a counter move and has nothing anywhere telling
+// them why or what to change. The callers reaching this arm even describe it as
+// "never a drop".
 //
 // The remedy string is asserted, not just the message: a drop line that does not
 // say "configure a spool" leaves the operator with a symptom and no action, which

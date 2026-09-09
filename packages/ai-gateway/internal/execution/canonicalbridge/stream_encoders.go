@@ -37,6 +37,23 @@ type openAIStreamEncoder struct {
 	// (emitContentDelta) for how the per-token hot path uses it to avoid
 	// marshalling the whole envelope struct graph.
 	contentSuffix []byte
+	finishTracker
+	// roleSent tracks which choices have had their opening role delta emitted.
+	// An n>1 turn opens each candidate separately, so this is per-choice rather
+	// than a single bool.
+	roleSent map[int]bool
+	// finishSent records that a finish_reason frame already went out on the
+	// chunk that observed it, so the terminal frame does not emit a second one.
+	finishSent bool
+}
+
+// result returns the frames accumulated by this Write, or nil when it produced
+// none (the caller treats nil as "skip this chunk").
+func (e *openAIStreamEncoder) result() ([]byte, error) {
+	if len(e.scratch) == 0 {
+		return nil, nil
+	}
+	return e.scratch, nil
 }
 
 // NewChatCompletionsStreamEncoder returns an encoder that converts canonical
@@ -82,7 +99,9 @@ func IngressStreamEncoder(ingress provcore.Format, model string) StreamTranscode
 	case provcore.FormatGemini, provcore.FormatVertex:
 		return &geminiStreamEncoder{}
 	case provcore.FormatCohere:
-		return &cohereStreamEncoder{}
+		// openBlock starts at -1: the zero value would claim block 0 is already
+		// open, so the first delta would emit no content-start at all.
+		return &cohereStreamEncoder{openBlock: -1}
 	case provcore.FormatReplicate:
 		return &replicateStreamEncoder{}
 	default:
@@ -121,11 +140,28 @@ func (e *openAIStreamEncoder) emit(choice oaiStreamChoice, usage *oaiStreamUsage
 func (e *openAIStreamEncoder) Write(_ context.Context, chunk provcore.Chunk) ([]byte, error) {
 	e.scratch = e.scratch[:0]
 
-	// Emit role-assignment chunk before any content.
-	if !e.headerSent {
-		e.headerSent = true
+	idx := chunk.ChoiceIndex
+	e.observe(chunk)
+
+	// Emit a role-assignment chunk before any content, once per CHOICE. An n>1
+	// turn opens each candidate with its own role delta, so a single header
+	// would leave every candidate past the first without one. Choice 0 keeps
+	// using headerSent, which callers construct the encoder with already set.
+	sentRole := e.headerSent
+	if idx != 0 {
+		sentRole = e.roleSent[idx]
+	}
+	if !sentRole {
+		if idx == 0 {
+			e.headerSent = true
+		} else {
+			if e.roleSent == nil {
+				e.roleSent = map[int]bool{}
+			}
+			e.roleSent[idx] = true
+		}
 		empty := ""
-		e.emit(oaiStreamChoice{Delta: oaiStreamDelta{Content: &empty, Role: "assistant"}}, nil)
+		e.emit(oaiStreamChoice{Index: idx, Delta: oaiStreamDelta{Content: &empty, Role: "assistant"}}, nil)
 	}
 
 	// Check content before Done: providers like Gemini 2.5 combine text,
@@ -134,25 +170,53 @@ func (e *openAIStreamEncoder) Write(_ context.Context, chunk provcore.Chunk) ([]
 	if chunk.Delta != "" {
 		// Per-token hot path: byte-identical to
 		// emit(oaiStreamChoice{Delta:{Content:&d}}, nil) but skips the envelope
-		// struct reflection (the dominant streaming encode cost).
-		e.emitContentDelta(chunk.Delta)
+		// struct reflection (the dominant streaming encode cost). Its precomputed
+		// suffix bakes in `"index":0`, so a candidate past the first takes the
+		// struct path — correctness over the optimisation on the rare shape.
+		if idx == 0 {
+			e.emitContentDelta(chunk.Delta)
+		} else {
+			d := chunk.Delta
+			e.emit(oaiStreamChoice{Index: idx, Delta: oaiStreamDelta{Content: &d}}, nil)
+		}
 	}
 	if len(chunk.ToolCallDeltas) > 0 {
-		e.emit(oaiStreamChoice{Delta: oaiStreamDelta{ToolCalls: buildOAIToolCalls(chunk.ToolCallDeltas)}}, nil)
+		e.emit(oaiStreamChoice{Index: idx, Delta: oaiStreamDelta{ToolCalls: buildOAIToolCalls(chunk.ToolCallDeltas)}}, nil)
 	}
 	if len(chunk.NexusThinking) > 0 {
-		e.emit(oaiStreamChoice{Delta: oaiStreamDelta{NexusThinking: chunk.NexusThinking}}, nil)
+		e.emit(oaiStreamChoice{Index: idx, Delta: oaiStreamDelta{NexusThinking: chunk.NexusThinking}}, nil)
 	}
 	if chunk.ReasoningDelta != "" {
-		e.emit(oaiStreamChoice{Delta: oaiStreamDelta{ReasoningContent: chunk.ReasoningDelta}}, nil)
+		e.emit(oaiStreamChoice{Index: idx, Delta: oaiStreamDelta{ReasoningContent: chunk.ReasoningDelta}}, nil)
+	}
+	if chunk.RefusalDelta != "" {
+		e.emit(oaiStreamChoice{Index: idx, Delta: oaiStreamDelta{Refusal: chunk.RefusalDelta}}, nil)
+	}
+	// A finish_reason is emitted on the chunk that OBSERVED it, tagged with that
+	// chunk's choice. Deferring every finish to the terminal chunk collapses an
+	// n>1 turn to one finish frame for the whole stream, and it rewrote a
+	// tool-calling turn's "tool_calls" into "stop" — the terminal chunk carries
+	// no finish of its own, because the wire puts it on the preceding
+	// delta-empty frame.
+	if chunk.FinishReason != "" && !chunk.Done {
+		fr := finishReasonOrStop(chunk.FinishReason)
+		e.finishSent = true
+		e.emit(oaiStreamChoice{Index: idx, Delta: oaiStreamDelta{}, FinishReason: &fr}, nil)
 	}
 	if chunk.Done {
-		// Emit finish_reason chunk before [DONE] (appended by
-		// LivePipeline.EmitOpenAIDone). Detail sub-blocks (cache-read +
-		// reasoning) mirror the non-stream projector so stream clients read the
-		// same splits.
-		fr := finishReasonOrStop(chunk.FinishReason)
-		e.emit(oaiStreamChoice{Delta: oaiStreamDelta{}, FinishReason: &fr}, buildOAIStreamUsage(chunk.Usage))
+		// The terminal frame carries usage, and carries a finish_reason only
+		// when none was seen earlier — the cross-format case, where a decoder
+		// reports the stop condition on the terminal chunk itself.
+		usage := buildOAIStreamUsage(chunk.Usage)
+		if e.finishSent && usage == nil {
+			return e.result()
+		}
+		if e.finishSent {
+			e.emit(oaiStreamChoice{Index: idx, Delta: oaiStreamDelta{}}, usage)
+			return e.result()
+		}
+		fr := finishReasonOrStop(e.resolve(chunk))
+		e.emit(oaiStreamChoice{Index: idx, Delta: oaiStreamDelta{}, FinishReason: &fr}, usage)
 	}
 
 	if len(e.scratch) == 0 {
@@ -189,9 +253,10 @@ func buildOAIStreamUsage(u *provcore.Usage) *oaiStreamUsage {
 //
 // Each text delta becomes a candidate part; tool calls become functionCall parts.
 // The Done chunk carries finishReason="STOP" and usageMetadata.
-type geminiStreamEncoder struct{}
+type geminiStreamEncoder struct{ finishTracker }
 
 func (e *geminiStreamEncoder) Write(_ context.Context, chunk provcore.Chunk) ([]byte, error) {
+	e.observe(chunk)
 	var parts []any
 	if chunk.Delta != "" {
 		parts = append(parts, map[string]any{"text": chunk.Delta})
@@ -230,6 +295,14 @@ func (e *geminiStreamEncoder) Write(_ context.Context, chunk provcore.Chunk) ([]
 		// classification.
 		parts = append(parts, map[string]any{"text": chunk.ReasoningDelta, "thought": true})
 	}
+	if chunk.RefusalDelta != "" {
+		// Gemini has no refusal channel. Rendering the decline as ordinary model
+		// text is a deliberate choice over dropping it: a Gemini-shaped client
+		// would otherwise receive an EMPTY turn where the model actually
+		// refused, and an empty answer is harder to act on than a visible
+		// decline. The classification is what is lost, not the text.
+		parts = append(parts, map[string]any{"text": chunk.RefusalDelta})
+	}
 	if len(parts) == 0 && !chunk.Done {
 		return nil, nil
 	}
@@ -238,7 +311,7 @@ func (e *geminiStreamEncoder) Write(_ context.Context, chunk provcore.Chunk) ([]
 		"index":   0,
 	}
 	if chunk.Done {
-		candidate["finishReason"] = canonicalFinishToGemini(chunk.FinishReason)
+		candidate["finishReason"] = canonicalFinishToGemini(e.resolve(chunk))
 	}
 	resp := map[string]any{"candidates": []any{candidate}}
 	if chunk.Done {
@@ -253,11 +326,23 @@ func (e *geminiStreamEncoder) Write(_ context.Context, chunk provcore.Chunk) ([]
 // event format (message-start → content-start → content-delta → content-end
 // → message-end).
 type cohereStreamEncoder struct {
-	headerSent    bool
-	contentOpened bool
+	headerSent bool
+	// openBlock is the index of the content block currently open, or -1. Cohere
+	// closes each block before opening the next and numbers them in the order
+	// they open, so one cursor models the whole thing — two independent "is it
+	// open" flags could not express "close the other one first" and produced
+	// overlapping blocks with hardcoded, inverted indices.
+	openBlock int
+	// openKind is what that block declared itself to be ("text" / "thinking"),
+	// so a delta of the other kind knows it has to start a new block.
+	openKind string
+	// nextBlock is the index the next block will take.
+	nextBlock int
+	finishTracker
 }
 
 func (e *cohereStreamEncoder) Write(_ context.Context, chunk provcore.Chunk) ([]byte, error) {
+	e.observe(chunk)
 	var buf bytes.Buffer
 
 	if !e.headerSent {
@@ -271,25 +356,45 @@ func (e *cohereStreamEncoder) Write(_ context.Context, chunk provcore.Chunk) ([]
 		})
 	}
 
-	if chunk.Delta != "" {
-		if !e.contentOpened {
-			e.contentOpened = true
-			writeCohereEvent(&buf, map[string]any{
-				"type":  "content-start",
-				"index": 0,
-				"delta": map[string]any{
-					"message": map[string]any{
-						"content": map[string]any{"type": "text"},
-					},
-				},
-			})
-		}
+	// Cohere has TWO reasoning-ish channels that both decode to the one
+	// canonical ReasoningDelta: tool-plan-delta (the plan for calling tools) and
+	// a `thinking` content block (chain of thought). NativeEvent is what tells
+	// them apart on a same-format turn — without it a tool plan round-trips as
+	// the model's private thinking, which keeps every byte and still mislabels
+	// it. Cross-format reasoning carries some other provider's event name and
+	// takes the thinking block, which is the closer of the two.
+	if chunk.ReasoningDelta != "" && chunk.NativeEvent == "tool-plan-delta" {
+		writeCohereEvent(&buf, map[string]any{
+			"type":  "tool-plan-delta",
+			"delta": map[string]any{"message": map[string]any{"tool_plan": chunk.ReasoningDelta}},
+		})
+	} else if chunk.ReasoningDelta != "" {
+		idx := e.openCohereBlock(&buf, "thinking")
 		writeCohereEvent(&buf, map[string]any{
 			"type":  "content-delta",
-			"index": 0,
+			"index": idx,
 			"delta": map[string]any{
 				"message": map[string]any{
-					"content": map[string]any{"text": chunk.Delta},
+					"content": map[string]any{"thinking": chunk.ReasoningDelta},
+				},
+			},
+		})
+	}
+
+	// Cohere has no refusal channel, so a decline joins the text run. Dropping it
+	// would hand a Cohere-shaped client an EMPTY turn where the model refused;
+	// the classification is what is lost, not the text.
+	for _, text := range [...]string{chunk.Delta, chunk.RefusalDelta} {
+		if text == "" {
+			continue
+		}
+		idx := e.openCohereBlock(&buf, "text")
+		writeCohereEvent(&buf, map[string]any{
+			"type":  "content-delta",
+			"index": idx,
+			"delta": map[string]any{
+				"message": map[string]any{
+					"content": map[string]any{"text": text},
 				},
 			},
 		})
@@ -302,14 +407,17 @@ func (e *cohereStreamEncoder) Write(_ context.Context, chunk provcore.Chunk) ([]
 				"index": tc.Index,
 				"delta": map[string]any{
 					"message": map[string]any{
-						"tool_calls": []any{
-							map[string]any{
-								"id":   tc.ID,
-								"type": "function",
-								"function": map[string]any{
-									"name":      tc.Name,
-									"arguments": tc.Arguments,
-								},
+						// tool_calls is an OBJECT on this wire, not an array —
+						// the captured stream sends
+						// {"tool_calls":{"id":…,"function":{…}}}. Emitting an
+						// array put the call where a Cohere client does not
+						// look for it.
+						"tool_calls": map[string]any{
+							"id":   tc.ID,
+							"type": "function",
+							"function": map[string]any{
+								"name":      tc.Name,
+								"arguments": tc.Arguments,
 							},
 						},
 					},
@@ -321,10 +429,8 @@ func (e *cohereStreamEncoder) Write(_ context.Context, chunk provcore.Chunk) ([]
 				"index": tc.Index,
 				"delta": map[string]any{
 					"message": map[string]any{
-						"tool_calls": []any{
-							map[string]any{
-								"function": map[string]any{"arguments": tc.Arguments},
-							},
+						"tool_calls": map[string]any{
+							"function": map[string]any{"arguments": tc.Arguments},
 						},
 					},
 				},
@@ -333,15 +439,10 @@ func (e *cohereStreamEncoder) Write(_ context.Context, chunk provcore.Chunk) ([]
 	}
 
 	if chunk.Done {
-		if e.contentOpened {
-			writeCohereEvent(&buf, map[string]any{
-				"type":  "content-end",
-				"index": 0,
-			})
-		}
+		e.closeCohereBlock(&buf)
 		msgEnd := map[string]any{
 			"type":  "message-end",
-			"delta": map[string]any{"finish_reason": canonicalFinishToCohere(chunk.FinishReason)},
+			"delta": map[string]any{"finish_reason": canonicalFinishToCohere(e.resolve(chunk))},
 		}
 		if chunk.Usage != nil {
 			tokens := map[string]any{}
@@ -374,6 +475,11 @@ func (e *replicateStreamEncoder) Write(_ context.Context, chunk provcore.Chunk) 
 	if chunk.Delta != "" {
 		// Replicate output event data is the raw token text — no JSON wrapping.
 		return fmt.Appendf(nil, "event: output\ndata: %s\n\n", chunk.Delta), nil
+	}
+	// Replicate's stream is a bare token feed with no refusal channel, so a
+	// decline goes out as output text rather than as an empty run.
+	if chunk.RefusalDelta != "" {
+		return fmt.Appendf(nil, "event: output\ndata: %s\n\n", chunk.RefusalDelta), nil
 	}
 	return nil, nil
 }
@@ -444,10 +550,10 @@ func finishReasonOrStop(fr string) string {
 // content_filter → "refusal", per the documented Anthropic vocabulary
 // (end_turn / max_tokens / stop_sequence / tool_use / pause_turn / refusal /
 // model_context_window_exceeded), where refusal is defined as "when streaming
-// classifiers intervene to handle potential policy violations". It previously
-// mapped to "stop_sequence", which is not a lossy approximation but a
+// classifiers intervene to handle potential policy violations". Mapping it
+// to "stop_sequence" is not a lossy approximation but a
 // different and false claim: stop_sequence means the caller's OWN custom
-// stop string was generated, so a filtered answer was reported as the
+// stop string was generated, so a filtered answer would be reported as the
 // caller's own stop rule firing.
 func canonicalFinishToAnthropicStop(fr string) string {
 	switch fr {
@@ -507,4 +613,44 @@ func buildOAIToolCalls(deltas []provcore.ToolCallDelta) []oaiToolCall {
 		calls = append(calls, tc)
 	}
 	return calls
+}
+
+// openCohereBlock returns the index of a block of `kind`, opening one — and
+// closing whatever was open first — when the current block is of another kind.
+//
+// Cohere's own stream does exactly this: content-start, deltas, content-end,
+// then the next block at the next index. Emitting two overlapping blocks with
+// hardcoded indices, as this used to, leaves a client that finalizes on
+// content-end waiting for an event that never comes, and attributes the
+// thinking to whichever index it thought was the answer.
+func (e *cohereStreamEncoder) openCohereBlock(buf *bytes.Buffer, kind string) int {
+	if e.openKind == kind && e.openBlock >= 0 {
+		return e.openBlock
+	}
+	e.closeCohereBlock(buf)
+	idx := e.nextBlock
+	e.nextBlock++
+	e.openBlock, e.openKind = idx, kind
+	content := map[string]any{"type": kind}
+	if kind == "thinking" {
+		// Upstream declares the empty string on the start event; a client that
+		// concatenates from the start event rather than from the first delta
+		// would otherwise read a missing key.
+		content["thinking"] = ""
+	}
+	writeCohereEvent(buf, map[string]any{
+		"type":  "content-start",
+		"index": idx,
+		"delta": map[string]any{"message": map[string]any{"content": content}},
+	})
+	return idx
+}
+
+// closeCohereBlock emits content-end for the open block, if any.
+func (e *cohereStreamEncoder) closeCohereBlock(buf *bytes.Buffer) {
+	if e.openBlock < 0 {
+		return
+	}
+	writeCohereEvent(buf, map[string]any{"type": "content-end", "index": e.openBlock})
+	e.openBlock, e.openKind = -1, ""
 }

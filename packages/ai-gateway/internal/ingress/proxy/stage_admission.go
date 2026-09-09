@@ -79,11 +79,13 @@ func (st admissionStage) run() bool {
 	// correct first admission gate.
 	vkMeta, err := h.authenticate(s.r)
 	if err != nil {
-		s.logger.Debug("auth failed", "error", err)
+		s.log().Debug("auth failed", "error", err)
 		h.writeAuthError(s.w, s.rec, err)
 		return false
 	}
-	s.logger.Debug("auth ok", "vkName", vkMeta.Name, "orgId", vkMeta.OrganizationID)
+	if s.debugEnabled() {
+		s.log().Debug("auth ok", "vkName", vkMeta.Name, "orgId", vkMeta.OrganizationID)
+	}
 	// Stamp VK ID on context for credential pool sticky routingcore.
 	s.r = s.r.WithContext(withStickyKey(s.r.Context(), vkMeta.ID))
 	s.rec.ApplyVKMeta(vkMeta)
@@ -226,7 +228,31 @@ var errRequestTooLarge = errors.New("request body exceeds the configured network
 // format-specific (path params for Gemini/Azure, body `model` for
 // body-carrying formats) and resolved via [ExtractIngressModel].
 //
-// endpointType is used to reject model="auto" for non-chat endpoints.
+// Delegation keywords are NOT special-cased here, and the one that was is gone.
+// `model: "auto"` on /v1/embeddings used to be refused outright — a line born in
+// the commit that first added smart routing, when the strategy was a chat-only
+// LLM task-router and an embeddings payload had nothing to select from.
+//
+// The code moved out from under it. prepareModelPool reads
+// ListEnabledCandidates(kind) per endpoint, SmartStrategy short-circuits every
+// non-chat kind to modalityAutoTargets, the modality guard drops cross-modality
+// targets, and the resolver's embeddings capability pre-filter runs on whatever
+// strategy produced the plan. Measured on prod 2026-09-03 against one smart rule
+// pinned to [auto, janus:default]: the keyword resolved chat -> command-r7b,
+// embeddings -> text-embedding-3-small (1536 dims), rerank ->
+// rerank-english-v3.0, image_generation -> gemini-3.1-flash-lite-image, all on
+// that one rule. Delegation already spans modalities; only the word "auto" was
+// held back, and only on one endpoint.
+//
+// The embeddings-specific worry is real and is NOT what that line addressed: two
+// embedding models emit vectors in different spaces, so a caller who indexed
+// under one and is served the other gets no error and meaningless similarity.
+// But that applies identically to every other keyword, and janus:default was
+// already serving embeddings in production. A guard that stops one spelling
+// while the same risk flows through any other is not a safety control. If
+// delegation should be restricted on embeddings, it has to be restricted for
+// ALL keywords, at the routing layer that knows which rule claimed the request
+// — not by naming a string at admission.
 // The network read cap is taken from the runtime payload-capture store
 // (`MaxRequestBytes`, default 10 MiB) so admin edits take effect on the
 // very next request without a restart. A non-positive store value
@@ -291,7 +317,7 @@ func (h *Handler) readBody(r *http.Request, in Ingress) (body []byte, bodyHandle
 	}
 	// Right-sized escaping copy taken from a POOL: the body escapes to the async
 	// audit writer, which returns the buffer to the pool at the record's terminal
-	// resolution (severing the per-request fresh allocation, the #1 hot-path
+	// resolution (severing the per-request fresh allocation, the hottest-path
 	// allocator). bodyHandle is the pool handle; the caller attaches it to the
 	// audit Record when the body is captured, stashes it for the finalizeAudit
 	// release when not, and the reject paths below return it directly — a
@@ -304,27 +330,28 @@ func (h *Handler) readBody(r *http.Request, in Ingress) (body []byte, bodyHandle
 		return nil, nil, "", false, err
 	}
 
-	// Multimodal routes are handled non-stream only in this slice: cost
-	// metering (stampModalityUnits) and the artifact fingerprint
-	// (buildArtifactRefs) live exclusively on the non-stream response path.
-	// A client-sent `stream: true` (e.g. gpt-image-1 partial_images) would
-	// otherwise take the streaming path and skip both — silently pricing the
-	// request at $0 with a NULL artifact_ref. Force non-stream; the raw body
-	// is still forwarded verbatim and the upstream returns a non-stream
-	// response. Streaming multimodal ships with its own accounting later.
-	switch typology.KindFromWireShape(in.WireShape) {
-	case typology.EndpointKindImageGeneration, typology.EndpointKindTTS:
+	// A client's `stream: true` is honoured only on kinds that HAVE a stream.
+	//
+	// A denylist naming image generation and TTS, for the
+	// multimodal reason below, fails open on every other non-streaming kind:
+	// `{"input":"…","stream":true}` on /v1/embeddings or /v1/rerank sets Stream
+	// on the upstream request and takes the SSE responder, for an upstream that
+	// answers with one JSON object and no event stream. The allowlist lives in
+	// typology beside the kinds themselves, so a kind added later defaults to
+	// non-stream instead of inheriting whatever the denylist forgot.
+	//
+	// The multimodal reason for naming those two still holds: cost metering
+	// (stampModalityUnits) and the artifact fingerprint (buildArtifactRefs) live
+	// exclusively on the non-stream response path, so a streamed image request
+	// would be priced at $0 with a NULL artifact_ref. The raw body is still
+	// forwarded verbatim and the upstream returns a non-stream response.
+	if !typology.EndpointKindSupportsStreaming(typology.KindFromWireShape(in.WireShape)) {
 		isStream = false
 	}
 
 	if modelID == "" {
 		audit.ReleaseRequestBuffer(bodyHandle)
 		return nil, nil, "", false, errModelRequired
-	}
-
-	if modelID == "auto" && typology.KindFromWireShape(in.WireShape) == typology.EndpointKindEmbeddings {
-		audit.ReleaseRequestBuffer(bodyHandle)
-		return nil, nil, "", false, fmt.Errorf("model \"auto\" is not supported for embeddings")
 	}
 
 	return body, bodyHandle, modelID, isStream, nil

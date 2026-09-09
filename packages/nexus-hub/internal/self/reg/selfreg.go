@@ -135,7 +135,7 @@ func (s *SelfRegistrar) heartbeatLoop(ctx context.Context) {
 			// Self-heal: if the thing row was pruned mid-run (e.g. by a dev
 			// `prisma db push --force-reset` or manual SQL), recreate it. Without
 			// this, metric_ops_raw FK keeps failing every 15s and Hub
-			// metrics never land. See docs/developers/specs/e31/e31-s6-hub-selfreg-self-heal.md.
+			// metrics never land.
 			if errors.Is(err, store.ErrNotFound) {
 				if upsertErr := s.doUpsert(ctx); upsertErr == nil {
 					s.logger.Info("hub re-registered after thing row was missing",

@@ -16,13 +16,23 @@ type TrafficEvent struct {
 	InternalPurpose string // always "ai-guard"
 	ErrorDetail     string // non-empty on failure
 
-	// TraceID carries the triggering user request's correlation id
-	// (the inbound X-Nexus-Request-Id propagated on ctx). It is stamped
-	// onto the ai-guard row's trace_id so the classifier's own cost row
-	// (internal_purpose='ai-guard', fresh row id) can be joined back to the
-	// user-traffic row that invoked the hook. Empty for ad-hoc callers
-	// (tests, tooling) that never set a request id on the context.
-	TraceID string
+	// RequestID carries the triggering user request's id (X-Nexus-Request-Id,
+	// its X-Request-Id alias, or the value the middleware minted, propagated on
+	// ctx). It is stamped onto the ai-guard row's external_request_id so the
+	// classifier's own cost row (internal_purpose='ai-guard', fresh row id) can
+	// be joined back to the user-traffic row that invoked the hook. Empty for
+	// ad-hoc callers (tests, tooling) that never set a request id on the
+	// context.
+	//
+	// It is NOT the trace id. trace_id means "the caller's own W3C trace", and
+	// this value is one Nexus resolved or minted — filing it there would make
+	// every ai-guard row look like it belonged to a customer trace.
+	RequestID string
+
+	// CallerTraceID is the triggering request's inbound W3C trace id, empty
+	// when the caller sent no traceparent. It is the only value allowed to
+	// reach trace_id.
+	CallerTraceID string
 
 	// Stamped from Response.Metadata after a successful classifier call;
 	// left zero on CacheHit, failures, or when AdapterBackend has no

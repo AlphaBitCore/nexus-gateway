@@ -8,10 +8,10 @@ import (
 )
 
 // ValidateBaseURL rejects a Control Plane / AI Gateway base URL that the CLI
-// could never reach. It exists because the env wizard and `nexus env add`
-// previously stored whatever string the operator typed: a value like
+// could never reach. Without it the env wizard and `nexus env add`
+// store whatever string the operator typed: a value like
 // "https://prod" (a placeholder mistaken for the env name) is a syntactically
-// valid URL whose host does not resolve, so every later admin call failed deep
+// valid URL whose host does not resolve, so every later admin call fails deep
 // in the request path with a cryptic "dial tcp: lookup prod: no such host"
 // instead of a clear error at entry.
 //

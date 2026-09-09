@@ -269,7 +269,7 @@ func textRequest(model string) *core.RoutingContext {
 	}
 }
 
-// TestFloor_NamedModelIsCallerOwnedUnlessEnforced is the #297 policy split.
+// TestFloor_NamedModelIsCallerOwnedUnlessEnforced is the named-model policy split.
 //
 // The required-modality floor is a real property of the model — a text-only
 // request sent to a model that REQUIRES audio cannot succeed. But who owns that

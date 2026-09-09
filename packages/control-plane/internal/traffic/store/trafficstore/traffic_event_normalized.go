@@ -115,7 +115,7 @@ func (store *Store) GetTrafficEventForNormalize(ctx context.Context, id string) 
 }
 
 // TrafficEventNormalized mirrors the traffic_event_normalized table.
-// JSON tags match the OpenAPI schema in docs/users/api/openapi/ai-gateway/e46-s2-aigw-openai.yaml.
+// JSON tags match the OpenAPI schema.
 type TrafficEventNormalized struct {
 	TrafficEventID         string          `json:"trafficEventId"`
 	RequestNormalized      json.RawMessage `json:"requestNormalized,omitempty"`

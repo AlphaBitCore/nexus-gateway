@@ -17,14 +17,13 @@ import (
 // after-vs-after null control drifts ~19%. Rather than chase a statistical answer
 // the machine cannot give, the cost is established deterministically — by proving
 // which half of the gate executes — and the arithmetic is anchored by the
-// microbenchmark below. Full derivation in
-// docs/handoffs/perf-compliance-agent-program.md under R-9.
+// microbenchmark below.
 
 // TestGateCostModelPremise pins the load-bearing premise: none of the benchmark
 // fixtures contains a backslash, so the validity scan provably never runs on them
 // and the recorded cost model applies. If a fixture gains a backslash the model is
-// silently invalidated — which is exactly the class of error that produced several
-// retracted numbers in this program — so it fails here instead.
+// silently invalidated — the class of error that produces retracted numbers — so it
+// fails here instead.
 func TestGateCostModelPremise(t *testing.T) {
 	fixtures := map[string]string{
 		"sseFixture(150)":    string(sseFixture(150)),
@@ -35,7 +34,7 @@ func TestGateCostModelPremise(t *testing.T) {
 	}
 	for name, f := range fixtures {
 		if n := strings.Count(f, `\`); n > 0 {
-			t.Errorf("%s contains %d backslash(es), so the validity scan DOES execute on it and the recorded cost model no longer applies — re-derive R-9 before quoting it", name, n)
+			t.Errorf("%s contains %d backslash(es), so the validity scan DOES execute on it and the recorded cost model no longer applies — re-derive it before quoting it", name, n)
 		}
 	}
 }

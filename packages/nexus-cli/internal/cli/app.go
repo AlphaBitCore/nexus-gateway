@@ -4,14 +4,17 @@
 package cli
 
 import (
+	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/httpclient"
+
 	"errors"
 	"fmt"
-	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"net/http"
 	"os"
 	"time"
+
+	"github.com/goccy/go-json"
 
 	"golang.org/x/term"
 
@@ -101,13 +104,18 @@ func (a *App) ensureConfig() error {
 		// PING to evict it, so the kill surfaces as a mid-request
 		// "http2: client connection lost". RetryTransport re-sends idempotent GETs
 		// once on a fresh connection so the hang is invisible. See local.RetryTransport.
-		a.HTTP = &http.Client{
+		a.HTTP = nexushttp.New(nexushttp.Config{
 			Timeout: 30 * time.Second,
-			Transport: &local.RetryTransport{
-				Next: &local.LoggingTransport{Base: base, Log: a.Log},
-				Idle: base,
+			Caller:  "nexus-cli",
+			// base already carries EnableH2Health, so the factory's own
+			// transport is not what this wraps.
+			Transport: func(*http.Transport) http.RoundTripper {
+				return &local.RetryTransport{
+					Next: &local.LoggingTransport{Base: base, Log: a.Log},
+					Idle: base,
+				}
 			},
-		}
+		})
 	}
 	return nil
 }

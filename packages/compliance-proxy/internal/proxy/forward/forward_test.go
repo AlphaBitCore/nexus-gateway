@@ -31,12 +31,12 @@ import (
 // runBudget is what Run is GIVEN to do its work; runBackstop is how long the
 // test waits for it to come back. They must not be equal.
 //
-// Every test here used 5s for both, which makes the assertion a coin flip: Run
+// Using 5s for both makes the assertion a coin flip: Run
 // is expected to return BECAUSE its context expired, so the goroutine has to
 // notice the expiry, unwind and close(done) — all after the same instant the
 // test's own timer fires. Under -race on a shared runner the test's timer wins
-// often enough that CI reported "Run with pinning exemption did not return
-// within 5s" for work that was returning correctly, just not in zero time.
+// often enough to report "Run with pinning exemption did not return
+// within 5s" for work that is returning correctly, just not in zero time.
 //
 // The backstop is deliberately far larger. It is not a second deadline on the
 // work; it exists only so a genuine hang fails the suite instead of wedging it.

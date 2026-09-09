@@ -31,8 +31,8 @@ import (
 // A nil *ChannelSecretCipher is a valid passthrough — Encrypt/Decrypt return
 // the config unchanged — but the hub boot wiring (InitAlerts) treats a nil
 // cipher as a fatal error and refuses to start, so a running hub always holds
-// a non-nil cipher (FU-1: CREDENTIAL_ENCRYPTION_KEY is required, never
-// downgraded to cleartext at rest).
+// a non-nil cipher: CREDENTIAL_ENCRYPTION_KEY is required, never downgraded to
+// cleartext at rest.
 type ChannelSecretCipher struct {
 	key []byte // 32 bytes (AES-256)
 }
@@ -76,8 +76,7 @@ func NewChannelSecretCipher(key []byte) (*ChannelSecretCipher, error) {
 // (nil, nil) when the key is empty and a hard error when it is set-but-malformed
 // (so a typo never silently downgrades to plaintext). The empty → (nil, nil)
 // case is NOT a license to run without encryption: the boot policy lives one
-// layer up in InitAlerts, which rejects a nil cipher and fails the hub closed
-// (FU-1).
+// layer up in InitAlerts, which rejects a nil cipher and fails the hub closed.
 func ChannelSecretCipherFromKey(key string) (*ChannelSecretCipher, error) {
 	keyHex := strings.TrimSpace(key)
 	if keyHex == "" {

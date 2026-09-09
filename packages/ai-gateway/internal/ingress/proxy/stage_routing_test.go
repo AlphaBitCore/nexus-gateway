@@ -96,7 +96,7 @@ func newRoutingStageFixtureWith(t *testing.T, result *routingcore.RouteResult, m
 		in:           ingress,
 		resolved:     ingress,
 		endpointType: string(typology.EndpointKindChat),
-		logger:       logger,
+		scopedLogger: logger,
 		rec:          rec,
 		modelID:      "gpt-4o",
 		rctxFull:     requestcontext.NewBuilder().WithEndpoint(string(typology.EndpointKindChat)).WithHeaders(r.Header).Build(),

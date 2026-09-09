@@ -4,14 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/goccy/go-json"
 	"io"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/goccy/go-json"
+
+	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/httpclient"
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/storage/store"
-	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
 	"github.com/jackc/pgx/v5"
 	"github.com/labstack/echo/v4"
 )

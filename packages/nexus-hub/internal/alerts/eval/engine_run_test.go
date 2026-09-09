@@ -709,8 +709,8 @@ func waitForCondition(t *testing.T, timeout time.Duration, fn func() bool, msg s
 // flakyMQConsumer returns an error on the first Consume call for the
 // target subject, then blocks until ctx.Done() on subsequent calls.
 // Used to verify the consume loop resubscribes on transient driver
-// failure (a single Consume return previously killed consumption for
-// that subject for the Hub's lifetime; resubscription is now required).
+// failure: without resubscription a single Consume return kills consumption for
+// that subject for the Hub's lifetime.
 type flakyMQConsumer struct {
 	stubMQConsumer
 	failOnce        sync.Map // subject string → bool (already failed?)

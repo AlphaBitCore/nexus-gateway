@@ -1,0 +1,63 @@
+{
+  "model": "gpt-4o-mini",
+  "input": [
+    {
+      "type": "message",
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "weather in Paris and in Tokyo? call the tool once per city"
+        }
+      ]
+    },
+    {
+      "id": "fc_0672602140a9fbd2016a92db58b46087d0882eee53fa0a8417",
+      "type": "function_call",
+      "status": "completed",
+      "arguments": "{\"city\":\"Paris\"}",
+      "call_id": "call_kvXdX7AI7pn4LhRIVBnG14PC",
+      "name": "get_weather"
+    },
+    {
+      "id": "fc_0672602140a9fbd2016a92db58b47087d0821fd7219d69a5c8",
+      "type": "function_call",
+      "status": "completed",
+      "arguments": "{\"city\":\"Tokyo\"}",
+      "call_id": "call_PzvROt7vrNAd2V8ig3owsO48",
+      "name": "get_weather"
+    },
+    {
+      "type": "function_call_output",
+      "call_id": "call_kvXdX7AI7pn4LhRIVBnG14PC",
+      "output": "{\"city\": \"Paris\", \"temp_c\": 18}"
+    },
+    {
+      "type": "function_call_output",
+      "call_id": "call_PzvROt7vrNAd2V8ig3owsO48",
+      "output": "{\"city\": \"Tokyo\", \"temp_c\": 18}"
+    }
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "name": "get_weather",
+      "description": "get weather",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "city": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "city"
+        ],
+        "additionalProperties": false
+      }
+    }
+  ],
+  "max_output_tokens": 600,
+  "store": false,
+  "parallel_tool_calls": true
+}

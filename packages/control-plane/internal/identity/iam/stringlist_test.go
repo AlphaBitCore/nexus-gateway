@@ -88,8 +88,8 @@ func TestStringList_Marshal_ArrayFormForMultiple(t *testing.T) {
 
 // TestStatement_AWSPolicyShapes_RoundTrip covers the three AWS-policy
 // shapes the user pasted from the AWS console as round-trip test
-// fixtures. Previously, unmarshaling these into our Statement type
-// would fail on the single-string Action or Resource forms. Post-fix
+// fixtures. Without the custom unmarshaler these fail on the
+// single-string Action or Resource forms; with it
 // the engine accepts them verbatim, evaluates them correctly, and
 // re-serializes back to canonical AWS shape.
 func TestStatement_AWSPolicyShapes_RoundTrip(t *testing.T) {
@@ -174,8 +174,8 @@ func TestStatement_AWSPolicyShapes_RoundTrip(t *testing.T) {
 // TestStatement_Canonical_LengthOneEmitsString verifies the AWS
 // formatting rule: a Statement whose Action has exactly one element
 // serializes back as `"Action": "..."` (bare string), not as a one-
-// element array. Same for Resource. Previously the engine had no
-// custom marshaler and would always emit arrays; this test pins the
+// element array. Same for Resource. Without a
+// custom marshaler the engine always emits arrays; this test pins the
 // canonicalising behavior.
 func TestStatement_Canonical_LengthOneEmitsString(t *testing.T) {
 	stmt := Statement{

@@ -3,10 +3,11 @@ package aiguard
 
 import (
 	"fmt"
-	"github.com/goccy/go-json"
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/goccy/go-json"
 )
 
 // fencePattern matches the common ```json ... ``` wrapper some LLMs emit.

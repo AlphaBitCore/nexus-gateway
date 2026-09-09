@@ -68,26 +68,26 @@ func prepareCrossFormat(a provcore.Adapter, f provcore.Format, shape typology.Wi
 	if f == provcore.FormatAnthropic {
 		other = provcore.FormatOpenAI
 	}
-	out, _, _, err := a.PrepareBody(provcore.Request{
+	prep, err := a.PrepareBody(provcore.Request{
 		WireShape:  shape,
 		Body:       []byte(body),
 		BodyFormat: other,
 		Target:     provcore.CallTarget{ProviderModelID: "provider-model-id"},
 	})
-	return out, err
+	return prep.Body, err
 }
 
 // The leak half of this pair moved to TestEgress_NoInternalCarrierReachesTheTransport
 // in the dispatch package, and the move is the point.
 //
-// It used to live here, driving Adapter.PrepareBody across the registry, and it
-// found 18 leaking adapter/shape pairs the day it was written. But PrepareBody is
-// a LEG, and the guarantee cannot live on a leg: the cross-format failover leg
-// builds its body in canonicalbridge and never calls PrepareBody, so a gate that
-// drives PrepareBody certifies the leg it drives and nothing else — which is
-// exactly how the leak survived being "fixed" twice. The assertion now runs at the
-// transport frame, where every leg funnels, against a passthrough codec (the worst
-// case: the shape every OpenAI-family adapter has).
+// Driving Adapter.PrepareBody across the registry here finds real leaks — 18
+// adapter/shape pairs. But PrepareBody is a LEG, and the guarantee cannot live
+// on a leg: the cross-format failover leg builds its body in canonicalbridge and
+// never calls PrepareBody, so a gate that drives PrepareBody certifies the leg
+// it drives and nothing else. That is how a leak survives being "fixed" twice.
+// The assertion belongs at the transport frame, where every leg funnels, against
+// a passthrough codec — the worst case, being the shape every OpenAI-family
+// adapter has.
 //
 // What stays here is the half PrepareBody genuinely owns.
 

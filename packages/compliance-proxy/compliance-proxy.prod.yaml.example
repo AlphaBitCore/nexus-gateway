@@ -92,8 +92,8 @@ upstream:
   dialTimeout: "10s"
 
 limits:
-  requestBodyLimit: "10MB"
-  responseBodyLimit: "10MB"
+  # Maximum bytes held while buffering an SSE response for inspection.
+  # Omit to use the streaming package default (8MB).
   sseBufferLimit: "8MB"
 
 log:

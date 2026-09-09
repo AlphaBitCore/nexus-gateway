@@ -2,9 +2,10 @@ package audit
 
 import (
 	"context"
-	"github.com/goccy/go-json"
 	"os"
 	"strconv"
+
+	"github.com/goccy/go-json"
 
 	"github.com/google/uuid"
 
@@ -48,7 +49,7 @@ func isBlockingDecision(d string) bool {
 // X-Nexus-Request-Id, so deriving the key from it lets a client that reuses
 // one id across retries collide two distinct events into one row — the
 // second is dropped with no error to anyone. The caller's value keeps its
-// correlation role on TraceID, where repeating is allowed.
+// correlation role on ExternalRequestID, where repeating is allowed.
 func eventID(rec *Record) string {
 	if rec.EventID == "" {
 		rec.EventID = uuid.NewString()
@@ -104,10 +105,14 @@ func (w *Writer) recordToMessage(rec *Record) *mq.TrafficEventMessage {
 		// traffic_event.source_process / .action. The consumer reads them
 		// via stripNulPtr(e.SourceProcess) / stripNulPtr(e.Action); leaving
 		// the fields empty here was the historical drift that wrote NULL.
-		SourceProcess:     "ai-gateway",
-		Action:            "traffic",
-		TraceID:           rec.TraceID,
-		ExternalRequestID: rec.ClientRequestID,
+		SourceProcess: "ai-gateway",
+		Action:        "traffic",
+		TraceID:       rec.TraceID,
+		// The RESOLVED request id, not the alias spelling. rec.ClientRequestID
+		// holds only what arrived under X-Request-Id, so a caller who sent the
+		// canonical name — or nothing, leaving the middleware to mint one — would
+		// leave this column NULL and lose the key every cross-service join uses.
+		ExternalRequestID: rec.RequestID,
 		EndUserID:         rec.EndUserID,
 		SessionID:         rec.SessionID,
 		Timestamp:         rec.Timestamp,
@@ -169,14 +174,31 @@ func (w *Writer) recordToMessage(rec *Record) *mq.TrafficEventMessage {
 		APIKeyFingerprint:      rec.APIKeyFingerprint,
 		UsageExtractionStatus:  rec.UsageExtractionStatus,
 		ErrorCode:              nilIfEmpty(rec.ErrorCode),
-		ErrorReason:            nilIfEmpty(rec.ErrorReason),
-		RequestHooksPipeline:   filterHookStage(rec.HooksPipeline, "request", "connection"),
-		ResponseHooksPipeline:  filterHookStage(rec.HooksPipeline, "response"),
-		RoutingTrace:           rec.RoutingTrace,
-		Details:                details,
-		CredentialID:           rec.CredentialID,
-		ThingID:                w.thingID,
-		ThingName:              w.thingName,
+		// Bounded HERE, at the one place every Record becomes a message, and
+		// not at the producers.
+		//
+		// An earlier pass bounded the producers it could find and called that
+		// "the bound is on the field". It was not: writeIngressError assigns
+		// rec.ErrorReason straight from the gateway's own error message, and
+		// for ROUTING_NO_MATCH that message is "no available provider for
+		// model " + the model string the CALLER supplied. Measured on prod
+		// 2026-08-27 after the deploy that shipped the producer-side bound:
+		// three error_reason rows, two bounded provider messages at 91 and 94
+		// bytes, and one gateway-generated row at 4044 — thirteen times the
+		// ceiling, its size chosen by the caller.
+		//
+		// cross_format.go, stream_accounting.go and the video relay assign it
+		// unbounded too. Bounding each of them is the same fix N times, and
+		// the N+1th call site reintroduces the defect. This is the choke point
+		// a new producer cannot route around.
+		ErrorReason:           nilIfEmpty(redact.BoundErrorReason(rec.ErrorReason)),
+		RequestHooksPipeline:  filterHookStage(rec.HooksPipeline, "request", "connection"),
+		ResponseHooksPipeline: filterHookStage(rec.HooksPipeline, "response"),
+		RoutingTrace:          rec.RoutingTrace,
+		Details:               details,
+		CredentialID:          rec.CredentialID,
+		ThingID:               w.thingID,
+		ThingName:             w.thingName,
 		// Hook aggregates derive from the existing per-hook latencyMs values
 		// in HooksPipeline so even callers that don't wire a PhaseTimer still
 		// emit useful data. Upstream-side fields (Ttfb / Total) and the
@@ -372,3 +394,20 @@ func (w *Writer) gateStorageBody(captured, redacted []byte, a decision.Action, s
 	}
 	return body
 }
+
+// This file deliberately does NOT gate error_reason on the response body's
+// storage decision, and the reason is worth keeping.
+//
+// An attempt to do that here was reverted. recordToMessage receives a STRING
+// with no provenance: it cannot tell a reason the gateway authored from one
+// quoted out of an upstream body, so any rule it applies is wrong for one of
+// them. It was wrong for the first — writeIngressError stamps rec.ResponseBody
+// unconditionally (its own header says so) while setting rec.ErrorReason, so a
+// compliance block had its reason replaced with "provider returned HTTP 403",
+// a claim about a provider that had returned 200, and the rewrite-failure arms
+// had their only record destroyed.
+//
+// The permission belongs where the provenance is: redact.ProviderErrorMessage
+// takes allowRawQuote, so the producer that holds the upstream bytes states
+// whether they may be quoted, and the compiler asks every future one the same
+// question.

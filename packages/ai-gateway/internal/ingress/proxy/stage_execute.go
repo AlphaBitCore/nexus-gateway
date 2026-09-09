@@ -22,9 +22,10 @@ func (st executeStage) run() bool {
 
 	// Phase 6+7+8: live upstream + downstream pipeline.
 	//
-	// Body normalisation — strip volatile bytes and inject
-	// cache_control markers (Anthropic/Bedrock) and Gemini cachedContent
-	// references before upstream dispatch. Runs on every MISS regardless
+	// Body normalisation — strip volatile bytes, and inject Gemini
+	// cachedContent references, before upstream dispatch. Anthropic
+	// prompt-cache markers are NOT here: they are written by the codec that
+	// owns that wire, during PrepareBody. Runs on every MISS regardless
 	// of broker wiring so that provider-side caching works even when the
 	// response-cache dedup broker is not configured. Every path through the
 	// cache stage — cache-eligible AND skipped (no-cache / time-sensitive /
@@ -35,14 +36,28 @@ func (st executeStage) run() bool {
 		normStart := time.Now()
 		primary := s.routeResult.Primary()
 		normBody, normResult := h.deps.Normaliser.NormalizeUpstream(
-			primary.AdapterType, primary.ProviderID, s.cachePreparedBody)
-		if !normResult.DryRun {
-			s.cachePreparedBody = normBody
-		}
+			primary.AdapterType, s.cachePreparedBody)
+		s.cachePreparedBody = normBody
 		s.rec.NormalizerRan = true
-		s.rec.NormalizedStripCount = normResult.StripCount
-		s.rec.NormalizedStripBytes = normResult.StripBytes
-		s.rec.CacheMarkerInjected = normResult.MarkersInjected
+		// A dry-run rule MEASURES; it does not edit. The row describes what
+		// happened to THIS request, so its strip counts are zero — the body
+		// went upstream untouched.
+		//
+		// Recording the would-have-stripped figure here instead put a number
+		// nothing removed in front of four readers that all treat it as an
+		// edit: the traffic audit drawer shows it to an admin, cache_roi sums
+		// it into a savings figure, the 5m rollups aggregate it, and the Hub's
+		// cache-quality monitor counts the row as "normaliser-modified" — the
+		// last of which is why that job, after flipping every rule to dry-run,
+		// kept measuring the same population and could not observe its own
+		// remediation.
+		if normResult.DryRun {
+			s.rec.NormalizedStripCount = 0
+			s.rec.NormalizedStripBytes = 0
+		} else {
+			s.rec.NormalizedStripCount = normResult.StripCount
+			s.rec.NormalizedStripBytes = normResult.StripBytes
+		}
 		s.phaseTimer.MarkBetween(traffic.PhaseNormUpstream, time.Since(normStart))
 	}
 	// Gemini cachedContent injection: rewrite the prepared body to
@@ -64,7 +79,7 @@ func (st executeStage) run() bool {
 				injected, injectResult, injectErr := mgr.Inject(
 					s.r.Context(), primary.ProviderID, primary.ProviderModelID, s.cachePreparedBody)
 				if injectErr != nil {
-					s.logger.Warn("geminicache inject error, pass-through", "error", injectErr)
+					s.log().Warn("geminicache inject error, pass-through", "error", injectErr)
 				} else {
 					s.cachePreparedBody = injected
 					geminicacheInvalidate = injectResult.Invalidate
@@ -94,7 +109,7 @@ func (st executeStage) run() bool {
 		// requests read the renormalized (redacted) canonical, and the
 		// answer key rides with the messages so the broker leg cannot
 		// write entries the reader will never find.
-		h.runViaBroker(s.r, s.w, s.rec, s.routeResult, s.body, s.isStream, s.resolved, s.reqHookResult, s.cacheKey, s.cachePreparedBody, s.cachePreparedRewrites, s.cachePreparedURLOverride, s.quotaInPrice, s.quotaOutPrice, s.quotaDecision, s.endpointType, s.requestID, s.start, s.logger, l2CanonicalFrom(s.cacheNormalized()))
+		h.runViaBroker(s.r, s.w, s.rec, s.routeResult, s.body, s.isStream, s.resolved, s.reqHookResult, s.cacheKey, s.cachePreparedBody, s.cachePreparedRewrites, s.cachePreparedURLOverride, s.quotaInPrice, s.quotaOutPrice, s.quotaDecision, s.endpointType, s.requestID, s.start, s.log(), l2CanonicalFrom(s.cacheNormalized()))
 		return false
 	}
 
@@ -102,7 +117,7 @@ func (st executeStage) run() bool {
 	// Pass the prepared+normalised body when available so the executor
 	// skips its internal PrepareBody call (idempotent, saves a µs-scale
 	// encode; nil body falls back to plain Execute behaviour).
-	result, target, attempts, err := h.fetchUpstreamWithPreparedBody(s.r, s.w, s.rec, s.routeResult, s.body, s.isStream, s.resolved, s.cachePreparedBody, s.cachePreparedRewrites, s.cachePreparedURLOverride, s.start, s.logger)
+	result, target, attempts, err := h.fetchUpstreamWithPreparedBody(s.r, s.w, s.rec, s.routeResult, s.body, s.isStream, s.resolved, s.cachePreparedBody, s.cachePreparedRewrites, s.cachePreparedURLOverride, s.start, s.log())
 	if err != nil {
 		return false // error response already written
 	}

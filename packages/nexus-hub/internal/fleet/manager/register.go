@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"github.com/goccy/go-json"
+	"sort"
 	"time"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/storage/store"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/schemas/configkey"
 )
 
 // RegisterRequest is the input for Thing registration.
@@ -35,12 +37,43 @@ type RegisterResponse struct {
 	DesiredVer int64          `json:"desiredVer"`
 }
 
+// knownThingTypes returns the recognised Thing types in a stable order, so the
+// log line above tells an operator what the value should have been instead of
+// only that it was wrong.
+func knownThingTypes() []string {
+	out := make([]string, 0, len(configkey.ValidByThingType))
+	for t := range configkey.ValidByThingType {
+		out = append(out, t)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // RegisterThing registers a Thing and returns its desired config.
 // On reconnect it performs a narrow session touch (preserving auth_type,
 // conn_protocol, enrolled_by, desired, and shadow state). Only the first
 // connection triggers a full enrollment upsert.
 func (m *Manager) RegisterThing(ctx context.Context, req RegisterRequest) (*RegisterResponse, error) {
 	m.logger.Info("registering thing", "thing_id", req.ID, "thing_type", req.Type)
+
+	// A type nothing recognises is admitted but never silent. GetConfigTemplates
+	// answers an unknown type with zero templates and a nil error, so the Thing
+	// enrolls, reports ONLINE, and receives no configuration for the life of the
+	// process — with nothing anywhere saying so. A typo in one service's
+	// ThingType is enough, and everything an operator can see says the node is
+	// healthy.
+	//
+	// Admitted rather than refused, for the reason the ws authenticator already
+	// gives about unknown statuses: rejecting here would break a rolling deploy
+	// that introduces a new Thing type before Hub is updated, and a fleet that
+	// cannot connect is worse than one that logs. ERROR rather than WARN because
+	// from this point the Thing is unconfigured and has no other way to say so.
+	if _, known := configkey.ValidByThingType[req.Type]; !known {
+		m.logger.Error("thing registered under an unrecognised type; it will receive NO config",
+			"thing_id", req.ID,
+			"thing_type", req.Type,
+			"knownTypes", knownThingTypes())
+	}
 
 	templates, err := m.store.ConfigStore().GetConfigTemplates(ctx, req.Type)
 	if err != nil {

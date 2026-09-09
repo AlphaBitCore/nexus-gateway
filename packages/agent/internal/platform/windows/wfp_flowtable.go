@@ -2,7 +2,13 @@
 
 // wfp_flowtable.go — in-memory port → original-destination lookup.
 //
-// SKELETON. See wfp_windows.go header for build-tag context.
+// This file is complete and live-wired: wfp_windows.go constructs the table
+// and the audit pump writes redirect flows into it, so GetOriginalDestination
+// reads it on every accepted connection. It carried a "SKELETON." marker,
+// which is the inverse of the rule it looks like it is obeying — a stub
+// marker on finished code makes the real stubs harder to find and tells the
+// next reader not to trust a hot path they should. See wfp_windows.go for
+// build-tag context.
 //
 // Authoritative design: docs/developers/architecture/agent-windows-wfp-driver.md §5.1
 // SDD: docs/developers/specs/e59-s2-usermode-go-integration.md §T2

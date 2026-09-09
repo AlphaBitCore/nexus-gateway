@@ -91,7 +91,10 @@ func DecodeResponsesRequest(raw []byte) ([]byte, error) {
 	// 2. input → messages. Two shapes:
 	//    a) input: "string"          → [{role:"user", content:string}]
 	//    b) input: [<input items>]   → mapped per-item
-	messages := buildMessagesFromInput(raw)
+	messages, carried := buildMessagesFromInput(raw)
+	if len(carried) > 0 {
+		out, _ = canonicalext.Set(out, extProvider, extResponsesKey+".passthrough_input", carried)
+	}
 	if len(messages) > 0 {
 		// Pre-pend any system message synthesized from instructions.
 		if inst := strings.TrimSpace(gjson.GetBytes(raw, "instructions").String()); inst != "" {
@@ -224,6 +227,34 @@ func EncodeResponsesRequest(canonical []byte) ([]byte, error) {
 	if origInst := canonicalext.Get(canonical, extProvider, extResponsesKey+".instructions").String(); origInst != "" {
 		instructions = origInst
 	}
+	// Items with no canonical message of their own — a reasoning echo, a
+	// built-in tool call — go back at the message index they were read from.
+	// Keyed by index rather than appended at the end because order is what a
+	// conversation IS: a reasoning block belongs before the call it produced.
+	carried := map[int][]any{}
+	canonicalext.Get(canonical, extProvider, extResponsesKey+".passthrough_input").
+		ForEach(func(_, entry gjson.Result) bool {
+			var item any
+			if err := json.Unmarshal([]byte(entry.Get("item").Raw), &item); err == nil {
+				at := int(entry.Get("after").Int())
+				carried[at] = append(carried[at], item)
+			}
+			return true
+		})
+	// `after` counts messages this codec DERIVED from input[]. Whether the
+	// leading system message is one of those depends on where it came from, and
+	// getting that wrong moves every carried item by one slot — which drops the
+	// last one entirely, or wedges a reasoning item between a call and the
+	// output it produced (a 400 from OpenAI, not a cosmetic difference).
+	//
+	// Instructions already present here came from the ext namespace, so the
+	// system message is the decode's own artifact and `after` never counted it.
+	// Instructions still empty means the system message arrived IN the messages
+	// — from `input[]` on the way in, or from another ingress — and it did
+	// occupy a slot in that numbering.
+	instructionsFromExt := instructions != ""
+	derived := 0
+
 	for i, m := range messages {
 		role := m.Get("role").String()
 		if i == 0 && role == "system" {
@@ -235,13 +266,17 @@ func EncodeResponsesRequest(canonical []byte) ([]byte, error) {
 			// happened to start with a system message), hoist that system
 			// content into `instructions` so the Responses target sees
 			// the high-level guidance through the natural field.
-			if instructions == "" {
+			if !instructionsFromExt {
 				instructions = m.Get("content").String()
+				derived++
 			}
 			continue
 		}
-		input = append(input, responsesInputItemFromMessage(m))
+		input = append(input, carried[derived]...)
+		input = append(input, responsesInputItemsFromMessage(m)...)
+		derived++
 	}
+	input = append(input, carried[derived]...)
 	if instructions != "" {
 		out, _ = sjson.SetBytes(out, "instructions", instructions)
 	}
@@ -313,61 +348,126 @@ func EncodeResponsesRequest(canonical []byte) ([]byte, error) {
 }
 
 // buildMessagesFromInput converts the Responses-API `input` field into a
-// canonical messages array. Handles the two valid shapes:
+// canonical messages array, plus the items that have no canonical message to
+// live in and are carried through the ext namespace instead.
+//
+// Two valid shapes:
 //   - string shorthand: input = "hello" → [{role:"user", content:"hello"}]
-//   - input-items array: each item is either an input_message ({role,
-//     content:[...]}) or a function_call_output ({type:"function_call_output",
-//     call_id, output}). Other item types (function_call echoes, reasoning
-//     echoes from prior turns when previous_response_id is unwound) are
-//     preserved verbatim under content for the corresponding role so the
-//     hook + router pipeline can still extract text via gjson selectors
-//     identical to chat-completions.
-func buildMessagesFromInput(raw []byte) []map[string]any {
+//   - input-items array, where an item is one of THREE things, not two:
+//     an input_message ({role, content:[...]}), a tool result
+//     ({type:"function_call_output", call_id, output}), or a tool CALL
+//     ({type:"function_call", call_id, name, arguments}).
+//
+// The third one is not optional. A client that keeps its own history — which
+// is every client not using previous_response_id — replays the whole prior
+// turn, and the model's tool call is part of that turn. Mapping it to a
+// user-role message with no content (which the default branch did, and which
+// this function's own comment used to describe as "preserved verbatim") loses
+// the call AND leaves the tool result that follows answering an id no message
+// declares. Both OpenAI and Anthropic reject that conversation outright, so
+// the second turn of every tool conversation failed.
+//
+// Consecutive function_call items merge into ONE assistant turn because that
+// is what parallel tool calling looks like on the chat wire: one assistant
+// message carrying N tool_calls, then N tool messages. Splitting them into N
+// assistant messages describes a different conversation.
+//
+// Everything else — a reasoning echo, a built-in tool call, an item type that
+// does not exist yet — is carried verbatim in `carried` with the message index
+// it sat at, so EncodeResponsesRequest puts it back where it was. Preserving
+// the bytes is not a nicety for reasoning items: encrypted_content is the
+// chain the model is continuing, the client cannot regenerate it, and dropping
+// it returns a 200 from a model that has forgotten how it got there.
+func buildMessagesFromInput(raw []byte) (msgs []map[string]any, carried []map[string]any) {
 	input := gjson.GetBytes(raw, "input")
 	if !input.Exists() {
-		return nil
+		return nil, nil
 	}
 	// Shape (a): string shorthand.
 	if input.Type == gjson.String {
-		return []map[string]any{{"role": "user", "content": input.String()}}
+		return []map[string]any{{"role": "user", "content": input.String()}}, nil
 	}
 	// Shape (b): array of input items.
 	if !input.IsArray() {
-		return nil
+		return nil, nil
 	}
-	var msgs []map[string]any
 	input.ForEach(func(_, item gjson.Result) bool {
-		// function_call_output items map to tool-role messages so the hook
-		// pipeline / router see a uniform message stream.
-		if item.Get("type").String() == "function_call_output" {
+		switch item.Get("type").String() {
+		case "function_call":
+			call := map[string]any{
+				"id":   item.Get("call_id").String(),
+				"type": "function",
+				"function": map[string]any{
+					"name":      item.Get("name").String(),
+					"arguments": item.Get("arguments").String(),
+				},
+			}
+			// Merge into the assistant turn already open. The test is whether the
+			// previous message IS an assistant turn, not whether it already
+			// carries calls: an assistant that speaks and then calls is one
+			// message on the chat wire, carrying both `content` and
+			// `tool_calls`, and that is exactly the shape OpenAI's own output[]
+			// takes for a reasoning model that narrates before it calls.
+			//
+			// Keying on the presence of a tool_calls key instead opened a second
+			// assistant turn after any assistant TEXT — two consecutive
+			// assistant messages, which is the same "N messages describes a
+			// different conversation" failure that merging consecutive calls
+			// exists to prevent, applied to only half the cases.
+			//
+			// A `tool` message in between correctly stops the merge: the role
+			// check fails, so call → result → call still opens a new turn.
+			if n := len(msgs); n > 0 && msgs[n-1]["role"] == "assistant" {
+				prev, _ := msgs[n-1]["tool_calls"].([]any)
+				msgs[n-1]["tool_calls"] = append(prev, call)
+				return true
+			}
+			// No `content` key at all rather than an explicit null: an
+			// assistant turn that only calls tools has no content, and a null
+			// there is a value some wires refuse.
+			msgs = append(msgs, map[string]any{
+				"role":       "assistant",
+				"tool_calls": []any{call},
+			})
+		case "function_call_output":
+			// Tool results map to tool-role messages so the hook pipeline and
+			// router see a uniform message stream.
 			msgs = append(msgs, map[string]any{
 				"role":         "tool",
 				"tool_call_id": item.Get("call_id").String(),
 				"content":      item.Get("output").String(),
 			})
-			return true
-		}
-		// Default: input_message with role + content[].
-		role := item.Get("role").String()
-		if role == "" {
-			role = "user"
-		}
-		var content any
-		c := item.Get("content")
-		if c.Type == gjson.String {
-			content = c.String()
-		} else if c.IsArray() {
-			var parts []map[string]any
-			c.ForEach(func(_, part gjson.Result) bool {
-				parts = append(parts, normalizeInputContentPart(part))
+		case "message", "":
+			role := item.Get("role").String()
+			if role == "" {
+				role = "user"
+			}
+			var content any
+			c := item.Get("content")
+			if c.Type == gjson.String {
+				content = c.String()
+			} else if c.IsArray() {
+				var parts []map[string]any
+				c.ForEach(func(_, part gjson.Result) bool {
+					parts = append(parts, normalizeInputContentPart(part))
+					return true
+				})
+				content = parts
+			}
+			msgs = append(msgs, map[string]any{"role": role, "content": content})
+		default:
+			var verbatim any
+			if err := json.Unmarshal([]byte(item.Raw), &verbatim); err != nil {
 				return true
+			}
+			carried = append(carried, map[string]any{
+				"after": len(msgs),
+				"item":  verbatim,
 			})
-			content = parts
 		}
-		msgs = append(msgs, map[string]any{"role": role, "content": content})
 		return true
 	})
-	return msgs
+	return msgs, carried
 }
 
 // normalizeInputContentPart maps Responses-API content-part types
@@ -475,34 +575,63 @@ func normalizeFunctionTool(item gjson.Result) map[string]any {
 // responsesInputItemFromMessage converts a canonical chat-completions
 // message into a Responses-API input item. Used by EncodeResponsesRequest
 // on the auto-upgrade path.
-func responsesInputItemFromMessage(m gjson.Result) any {
+// responsesInputItemsFromMessage maps ONE canonical message to the input items
+// the Responses wire needs for it — plural, because an assistant turn that both
+// speaks and calls tools is one message on the chat wire and several items
+// here.
+//
+// The tool_calls half is the inverse of the function_call decode above, and it
+// fails the same conversation when missing: the tool result that follows would
+// reference a call the wire never saw. It is reached on the auto-upgrade path
+// (/v1/chat/completions ingress → upstream /v1/responses) and on any ingress
+// routed to a Responses target, so a chat client that never touches
+// /v1/responses still depends on it.
+func responsesInputItemsFromMessage(m gjson.Result) []any {
 	role := m.Get("role").String()
 	if role == "tool" {
-		return map[string]any{
+		return []any{map[string]any{
 			"type":    "function_call_output",
 			"call_id": m.Get("tool_call_id").String(),
 			"output":  m.Get("content").String(),
-		}
+		}}
 	}
+
+	var items []any
 	content := m.Get("content")
-	if content.Type == gjson.String {
+	switch {
+	case content.Type == gjson.String && content.String() != "":
 		// Plain text shorthand → input_text content part.
-		return map[string]any{
+		items = append(items, map[string]any{
 			"role": role,
 			"content": []any{
 				map[string]any{"type": "input_text", "text": content.String()},
 			},
-		}
-	}
-	if content.IsArray() {
+		})
+	case content.IsArray():
 		var parts []any
 		content.ForEach(func(_, part gjson.Result) bool {
 			parts = append(parts, responsesContentPartFromCanonical(part))
 			return true
 		})
-		return map[string]any{"role": role, "content": parts}
+		items = append(items, map[string]any{"role": role, "content": parts})
 	}
-	return map[string]any{"role": role}
+
+	m.Get("tool_calls").ForEach(func(_, tc gjson.Result) bool {
+		items = append(items, map[string]any{
+			"type":      "function_call",
+			"call_id":   tc.Get("id").String(),
+			"name":      tc.Get("function.name").String(),
+			"arguments": tc.Get("function.arguments").String(),
+		})
+		return true
+	})
+
+	if len(items) == 0 {
+		// A turn with neither content nor calls still has a role worth
+		// carrying; emitting nothing would silently shorten the conversation.
+		items = append(items, map[string]any{"role": role})
+	}
+	return items
 }
 
 func responsesContentPartFromCanonical(part gjson.Result) map[string]any {

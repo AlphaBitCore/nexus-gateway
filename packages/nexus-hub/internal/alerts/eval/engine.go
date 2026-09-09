@@ -4,15 +4,16 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/goccy/go-json"
 	"log/slog"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/goccy/go-json"
+
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/alerts/engine"
+	alerting "github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/alerts/engine"
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/observability/consumer"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/mq"
 )

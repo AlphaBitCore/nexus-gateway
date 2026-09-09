@@ -12,8 +12,7 @@ import (
 // Return contract:
 //   - state is an opaque value that will be JSON-marshalled into the
 //     handler response under the "state" key. Loaders SHOULD return a
-//     shape that matches the consuming Thing's ShadowApplier exactly
-//     (see docs/developers/specs/e3/e3-s5-config-sync-remediation.md for agent shapes).
+//     shape that matches the consuming Thing's ShadowApplier exactly.
 //   - state = map[string]any{} (an empty JSON object) is the "no-op"
 //     signal: agent ShadowAppliers treat "{}" as "leave local defaults
 //     intact". Loaders MUST use this when scope is empty (e.g. an agent

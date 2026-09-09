@@ -119,6 +119,23 @@ func (l *Layer) ResolveModelCandidates(ctx context.Context, code string) ([]stor
 	if code == "" {
 		return nil, nil
 	}
+	// An unbuilt catalogue and a catalogue that does not carry this code are
+	// opposite facts, and this is the one lookup here that answered the first
+	// with the second — (nil, nil), which downstream reads as "the caller named
+	// nothing": hydrateRequestedModel then widens every provider-scoped rule to
+	// every provider, and the simulate preview reports the model as absent. Both
+	// are permanent verdicts on a condition that clears on its own, the class of
+	// answer recorded at stage_routing_passthrough.go as having made six enabled
+	// models look deleted for 34 minutes on staging.
+	//
+	// The loaded signal is modelsByCode, NOT models.All(): NewSnapshotCache
+	// pre-seeds an empty map, so All() is non-nil from construction and cannot
+	// distinguish "never loaded" from "loaded and empty". loadModels builds the
+	// snapshot and this index in the same pass, so a nil index means that pass
+	// has never completed — the same signal GetModelByCode above already trusts.
+	if l.modelsByCode.Load() == nil {
+		return nil, fmt.Errorf("cachelayer: model candidates %q: %w", code, ErrIndexUnavailable)
+	}
 	all := l.models.All()
 	var out []store.Model
 	for _, m := range all {
@@ -156,42 +173,6 @@ func (l *Layer) ListEnabledModels(ctx context.Context) ([]store.Model, error) {
 		}
 		return out[i].Name < out[j].Name
 	})
-	return out, nil
-}
-
-// GetCredentialByID returns the Credential row by ID.
-func (l *Layer) GetCredentialByID(ctx context.Context, id string) (*store.Credential, error) {
-	if c, ok := l.credentials.Get(id); ok {
-		v := c
-		return &v, nil
-	}
-	return nil, fmt.Errorf("cachelayer: credential %q: %w", id, errNotFound)
-}
-
-// GetCredentialForProvider returns the first enabled, active credential for a
-// provider by consulting the precomputed secondary index.
-func (l *Layer) GetCredentialForProvider(ctx context.Context, providerID string) (*store.Credential, error) {
-	idx := l.credentialsByProviderFirst.Load()
-	if idx == nil {
-		return nil, fmt.Errorf("cachelayer: credential for provider %q: %w", providerID, ErrIndexUnavailable)
-	}
-	if c, ok := (*idx)[providerID]; ok {
-		v := c
-		return &v, nil
-	}
-	return nil, fmt.Errorf("cachelayer: credential for provider %q: %w", providerID, errNotFound)
-}
-
-// ListCredentialsForProvider returns all enabled, active credentials for a
-// provider from the snapshot. Used by the multi-credential pool selector.
-func (l *Layer) ListCredentialsForProvider(ctx context.Context, providerID string) ([]store.Credential, error) {
-	all := l.credentials.All()
-	var out []store.Credential
-	for _, c := range all {
-		if c.ProviderID == providerID && c.Enabled && c.Status == "active" && c.SelectionWeight > 0 {
-			out = append(out, c)
-		}
-	}
 	return out, nil
 }
 
@@ -246,17 +227,6 @@ func (l *Layer) ProvidersAll() map[string]store.Provider {
 		return nil
 	}
 	return l.providers.All()
-}
-
-// CredentialsAll returns the full Credential snapshot for runtime introspection (e31-s7).
-// CALLERS MUST REDACT EncryptedKey / EncryptionIv / EncryptionTag before exposing
-// over a public surface. Provided here as an unredacted internal accessor —
-// consumers (introspection wiring) layer the redaction on top.
-func (l *Layer) CredentialsAll() map[string]store.Credential {
-	if l == nil || l.credentials == nil {
-		return nil
-	}
-	return l.credentials.All()
 }
 
 func (l *Layer) GetEnabledRoutingRules(ctx context.Context) ([]store.RoutingRule, error) {

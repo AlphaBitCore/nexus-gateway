@@ -90,8 +90,8 @@ func (j *ProviderHealthRollupJob) Run(ctx context.Context) error {
 		}
 	}
 	// Runs whether or not anything had traffic — an empty window is exactly
-	// when every remaining verdict is stale, and the early return that used to
-	// sit here skipped that case.
+	// when every remaining verdict is stale, and an early return here would
+	// skip that case.
 	if err := j.clearStaleVerdicts(ctx, windowStart); err != nil {
 		j.logger.Error("clear stale provider health", "error", err)
 	}

@@ -29,6 +29,15 @@ const (
 	// when FT.CREATE is called on an existing index.
 	indexAlreadyExistsMsg = "Index already exists"
 
+	// ttlRepairTimeout bounds the compensating DEL that removes an entry whose
+	// PEXPIRE failed. It runs on a context detached from the caller's — the
+	// caller's is usually the thing that just expired — so it needs a budget of
+	// its own. One round-trip to a local Valkey, generously bounded: long
+	// enough that a momentary stall does not abandon an unexpiring entry
+	// holding prompt and response text, short enough that a dead Valkey cannot
+	// hold the request goroutine.
+	ttlRepairTimeout = 2 * time.Second
+
 	// indexNotFoundMsg is the error prefix from valkey-search on FT.DROPINDEX
 	// for a non-existent index.
 	indexNotFoundMsg = "Unknown index name"
@@ -175,6 +184,20 @@ func (c *Client) StoreEntry(ctx context.Context, indexName string, in StoreInput
 		maxEntryBytes = defaultMaxEntryBytes
 	}
 
+	// A non-positive TTL is REFUSED, not silently written without one.
+	//
+	// Guarding with `if in.TTL > 0 { PEXPIRE }` below instead lets a zero TTL
+	// produce an entry that never expires. The chat path hardcodes 24h and
+	// cannot reach it, but the semantic-prewarm endpoint passes `ttlSeconds`
+	// straight from the caller's JSON — a field whose own doc comment says
+	// [60, 604800] and which nothing else enforces. `{"ttlSeconds": 0}`, or
+	// simply omitting it, writes a permanent entry holding prompt and response
+	// text where no retention job and no erasure request can reach it: those
+	// operate on tables, not on cache keys.
+	if in.TTL <= 0 {
+		return fmt.Errorf("semantic/client: StoreEntry: refusing a TTL of %v — a cache entry holding response text must expire", in.TTL)
+	}
+
 	// Size cap check — response_body is the dominant contributor.
 	if len(in.ResponseBody) > maxEntryBytes {
 		return fmt.Errorf("%w: response_body %d > %d",
@@ -216,12 +239,40 @@ func (c *Client) StoreEntry(ctx context.Context, indexName string, in StoreInput
 	}
 
 	// Set TTL via PEXPIRE (millisecond precision).
-	if in.TTL > 0 {
-		if err := c.rdb.PExpire(ctx, entryKey, in.TTL).Err(); err != nil {
-			// Non-fatal: the entry was written; expiry is best-effort.
-			c.log.Warn("semantic/client: StoreEntry: PEXPIRE failed",
-				"key", entryKey, "ttl", in.TTL, "error", err)
+	//
+	// A PEXPIRE failure DELETES the entry rather than leaving it immortal, for
+	// the same reason the guard above refuses a zero TTL: losing a cache entry
+	// costs one upstream call, while keeping an unexpiring one costs a copy of a
+	// prompt and a response that no retention job and no erasure request can
+	// reach.
+	//
+	// It is reported to the caller too. Swallowed as "best-effort expiry", it
+	// would have the writer count a deliberately discarded write as a
+	// successful L2 store — the metric and the audit flag both claiming a
+	// cache entry that does not exist, after the embedding was paid for.
+	if err := c.rdb.PExpire(ctx, entryKey, in.TTL).Err(); err != nil {
+		c.log.Warn("semantic/client: StoreEntry: PEXPIRE failed; deleting the entry rather than leaving it without an expiry",
+			"key", entryKey, "ttl", in.TTL, "error", err)
+		// The repair runs on a context DETACHED from the caller's, because the
+		// likeliest reason PEXPIRE just failed is that the caller's deadline
+		// expired. The L2 write budget (proxy_l2.go) is 5s for the whole
+		// operation and it also covers the embedding round-trip, so a slow
+		// embedding leaves the deadline landing between HSET and here. Issuing
+		// the delete on that same dead context cannot succeed — the repair was
+		// guaranteed to fail in precisely the case that needs it, leaving the
+		// immortal entry the TTL guard above exists to prevent.
+		delCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), ttlRepairTimeout)
+		defer cancel()
+		if delErr := c.rdb.Del(delCtx, entryKey).Err(); delErr != nil {
+			c.log.Error("semantic/client: StoreEntry: could not delete an entry left without an expiry",
+				"key", entryKey, "error", delErr)
 		}
+		// Not a stored entry either way: deleted, or present but unexpiring and
+		// therefore not something the cache may claim. Returning nil here made
+		// the writer run IncWrite("ok") and answer Stored: true, so a discarded
+		// write was counted as a successful L2 store — the metric and the audit
+		// flag both said the response was cached when nothing was.
+		return fmt.Errorf("%w: PEXPIRE %q: %w", ErrValkeyUnavailable, entryKey, err)
 	}
 
 	c.log.Debug("semantic/client: StoreEntry: wrote entry",

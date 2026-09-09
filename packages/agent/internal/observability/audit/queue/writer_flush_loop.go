@@ -19,14 +19,14 @@ import (
 // signal after draining whatever is still in the channel.
 //
 // The interval trigger is a timer armed only while a batch is PENDING, not a
-// standing ticker (finding A-4). With flushInterval at its production 100 ms
-// this loop used to wake 600 times a minute forever, and on an idle host every
-// one of those wakes found an empty batch and returned immediately: 36,000 no-op
-// wake-ups an hour, which on the agent is a laptop battery cost rather than a
-// throughput one. Arming per batch makes the idle rate exactly zero — the
-// goroutine parks in select with no pending timer — while leaving the WORST-CASE
-// flush latency unchanged at flushInterval, now measured from the first event of
-// the batch rather than from an arbitrary tick boundary.
+// standing ticker. A standing ticker at the production 100 ms flushInterval wakes
+// this loop 600 times a minute forever, and on an idle host every one of those
+// wakes finds an empty batch and returns immediately: 36,000 no-op wake-ups an
+// hour, which on the agent is a laptop battery cost rather than a throughput one.
+// Arming per batch makes the idle rate exactly zero — the goroutine parks in
+// select with no pending timer — while leaving the WORST-CASE flush latency
+// unchanged at flushInterval, measured from the first event of the batch rather
+// than from an arbitrary tick boundary.
 func (w *QueueWriter) flushLoop() {
 	defer w.wg.Done()
 

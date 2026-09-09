@@ -10,16 +10,16 @@ import (
 	"time"
 )
 
-// Finding C-30 merged the reader goroutine and the per-frame channel into the delivery loop.
-// The B6 review named three merge traps; these pin the two that are observable from
-// behaviour. (The third — do not delete the exported CloseUpstreamOnExit — is pinned by the
-// rewritten TestLivePipeline_WriterError_ClosesUpstream and by ai-gateway failing to build.)
+// The reader goroutine and the per-frame channel are merged into the delivery loop.
+// Three traps come with that merge; these pin the two observable from behaviour. (The
+// third — do not delete the exported CloseUpstreamOnExit — is pinned by
+// TestLivePipeline_WriterError_ClosesUpstream and by ai-gateway failing to build.)
 
-// TestLivePipeline_NoGoroutineLeak is the invariant the merge INTRODUCED, and the reason the
-// merge is worth having independently of the per-frame saving. Before it, a panic in the
-// delivery loop unwound through `defer cancel()` but not through CloseUpstreamOnExit, and a
-// reader parked in upstream.Read never observed ctx — so that goroutine and its pooled
-// 64 KiB scan buffer leaked for the life of the process.
+// TestLivePipeline_NoGoroutineLeak is the invariant the merge INTRODUCES, and the reason the
+// merge is worth having independently of the per-frame saving. Split across two goroutines,
+// a panic in the delivery loop unwinds through `defer cancel()` but not through
+// CloseUpstreamOnExit, and a reader parked in upstream.Read never observes ctx — so that
+// goroutine and its pooled 64 KiB scan buffer leak for the life of the process.
 func TestLivePipeline_NoGoroutineLeak(t *testing.T) {
 	settle := func() {
 		for range 5 {
@@ -79,8 +79,8 @@ func TestLivePipeline_DoneTerminatesWithoutBlocking(t *testing.T) {
 }
 
 // TestLivePipeline_UsageFedPastTheAuditCap is MERGE TRAP 1, the highest-severity one. Feed
-// used to live in the reader, so the delivery loop's audit-capped and MaxBufferSize skips
-// could not affect it. If it is placed below either skip, every stream past MaxBufferSize
+// in the reader was above the delivery loop's audit-capped and MaxBufferSize skips, so they
+// could not affect it. Placed below either skip, every stream past MaxBufferSize
 // stops feeding the accumulator partway — and since every tier-1 accumulator reads its
 // counts from frames at the END of the stream, such streams lose provider-reported usage
 // entirely and silently fall back to the tokenizer.

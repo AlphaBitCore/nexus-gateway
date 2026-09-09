@@ -144,7 +144,7 @@ func readCounter(_ *testing.T, reason string) float64 {
 	return testutil.ToFloat64(modifyDegradedTotal.WithLabelValues(reason))
 }
 
-// TestRecordModelAEscalation_SplitsByCause pins #11: the Model A escalation counter
+// TestRecordModelAEscalation_SplitsByCause: the Model A escalation counter
 // increments under the bounded cause label, so a memory-pressure eviction (a buffer-ceiling
 // tuning signal) is observably distinct from a confirmed enforcing hit.
 func TestRecordModelAEscalation_SplitsByCause(t *testing.T) {
@@ -163,8 +163,8 @@ func TestRecordModelAEscalation_SplitsByCause(t *testing.T) {
 	}
 }
 
-// TestBufferPipeline_ApproveWebhookAuditSpansSoftBlock_NoOverBlock is the #14 fix at the
-// layer the over-block actually occurs: on the strict appliance with NO frame redactor, a
+// TestBufferPipeline_ApproveWebhookAuditSpansSoftBlock_NoOverBlock is the same case at
+// the layer the over-block occurs: on the strict appliance with NO frame redactor, a
 // BlockSoft aggregate whose only spans are audit-only (RedactionApplicable=false — the
 // approve-webhook+redactions shape) must NOT take the redaction arm (which would fail
 // closed) — it soft-delivers the original via the default replay arm.

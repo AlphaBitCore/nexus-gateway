@@ -66,11 +66,11 @@ const (
 	// fully configured and enabled). It is a config posture, and an operator
 	// seeing it should look at the two cache settings pages.
 	//
-	// It used to be stamped for the no-target case as well, which made a config
+	// Stamping it for the no-target case as well makes a config
 	// posture and a routing outcome indistinguishable in
 	// traffic_event.gateway_cache_skip_reason and in
 	// nexus_cache_lookups_total{result}. Anyone reading "disabled" to mean
-	// "caching is off" was making an inference the label could not support.
+	// "caching is off" would be making an inference the label cannot support.
 	GatewayCacheSkipReasonDisabled GatewayCacheSkipReason = "disabled"
 	// GatewayCacheSkipReasonNoTargets means the cache tiers are active but
 	// routing produced no target to key an entry against, so there was nothing

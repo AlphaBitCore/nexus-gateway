@@ -10,8 +10,9 @@
 package audit
 
 import (
-	"github.com/goccy/go-json"
 	"testing"
+
+	"github.com/goccy/go-json"
 )
 
 // TestEndpointTypeFromPath_KnownSegments verifies that every path-segment

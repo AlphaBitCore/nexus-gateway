@@ -44,13 +44,14 @@
     "hero": {
       "inSync": "Configuración sincronizada",
       "inSyncMeta": "Políticas aplicadas, último reporte: {{at}}.",
-      "drifted": "Desincronizado del administrador",
-      "driftedMeta": "{{behind}} versión(es) por detrás. El agente se pondrá al día en la próxima sincronización.",
       "killSwitchEngaged": "Kill switch activado",
       "killSwitchMeta": "La interceptación está pausada por el administrador. Motivo: {{reason}}.",
       "diagActive": "Modo de diagnóstico activo",
       "diagActiveMeta": "Telemetría detallada hasta {{until}}.",
-      "desired": "objetivo"
+      "outOfSync": "Desincronizado del administrador",
+      "outOfSyncMeta_one": "{{count}} versión por detrás. El agente se pondrá al día en la próxima sincronización.",
+      "outOfSyncMeta_other": "{{count}} versiones por detrás. El agente se pondrá al día en la próxima sincronización.",
+      "target": "objetivo"
     },
     "kpi": {
       "domains": "Dominios",
@@ -66,16 +67,12 @@
       "enforcement": "Aplicación",
       "deviceControls": "Controles del dispositivo"
     },
-    "section": {
-      "count": "{{count}} elemento{{s}}"
-    },
     "sync": {
       "title": "Estado de sincronización",
-      "desired": "Versión objetivo",
-      "reported": "Versión reportada",
       "inSync": "Sincronizado",
-      "drifted": "Desincronizado ({{behind}} versión(es) por detrás)",
-      "lastReportedAt": "Último reporte"
+      "lastReportedAt": "Último reporte",
+      "outOfSync_one": "Desincronizado ({{count}} versión por detrás)",
+      "outOfSync_other": "Desincronizado ({{count}} versiones por detrás)"
     },
     "interceptionDomains": {
       "title": "Dominios interceptados",

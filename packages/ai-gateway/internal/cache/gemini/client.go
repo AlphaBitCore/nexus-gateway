@@ -4,13 +4,14 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/goccy/go-json"
 	"io"
 	"net/http"
 	"strings"
 	"time"
 
-	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
+	"github.com/goccy/go-json"
+
+	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/httpclient"
 )
 
 // cachedRecord is persisted in Redis for each active cachedContent entry.

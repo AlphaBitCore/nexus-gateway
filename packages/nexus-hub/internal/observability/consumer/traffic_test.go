@@ -129,9 +129,9 @@ func testPool(t *testing.T) *pgxpool.Pool {
 }
 
 // TestTrafficConsumer_WritesInternalPurpose pins the MQ→DB mapping for the
-// internal_purpose column added in Task 14. Events published with
+// internal_purpose column. Events published with
 // InternalPurpose="ai-guard" must land on traffic_event.internal_purpose so
-// admin analytics can exclude them from customer billing views (Task 15).
+// admin analytics can exclude them from customer billing views.
 func TestTrafficConsumer_WritesInternalPurpose(t *testing.T) {
 	pool := testPool(t)
 	defer pool.Close()
@@ -186,8 +186,6 @@ func TestTrafficConsumer_WritesInternalPurpose(t *testing.T) {
 // RequestBlockingRule={pack, pack_version, rule_id} must land on
 // traffic_event.request_blocking_rule so the admin UI traffic-event
 // detail view can surface which rule pack triggered the rejection.
-// (Originally wrote to a single blocking_rule column; the pipeline was
-// split into request_/response_ blocking_rule pair.)
 func TestTrafficConsumer_WritesBlockingRule(t *testing.T) {
 	pool := testPool(t)
 	defer pool.Close()

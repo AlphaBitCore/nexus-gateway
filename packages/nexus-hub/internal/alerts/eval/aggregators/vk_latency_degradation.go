@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/alerts/eval"
+	alerteval "github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/alerts/eval"
 )
 
 // VKLatencyDegradation is the per-VK twin of provider.high_latency_percentile —

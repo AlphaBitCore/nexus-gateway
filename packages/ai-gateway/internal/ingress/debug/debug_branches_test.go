@@ -49,8 +49,8 @@ func (a probeOnlyAdapter) Format() provcore.Format { return a.format }
 func (a probeOnlyAdapter) SupportsShape(sh typology.WireShape) bool {
 	return sh == typology.WireShapeOpenAIChat
 }
-func (a probeOnlyAdapter) PrepareBody(req provcore.Request) ([]byte, []string, string, error) {
-	return req.Body, nil, "", nil
+func (a probeOnlyAdapter) PrepareBody(req provcore.Request) (provcore.PreparedBody, error) {
+	return provcore.PreparedBody{Body: req.Body}, nil
 }
 func (a probeOnlyAdapter) Execute(_ context.Context, _ provcore.Request) (*provcore.Response, error) {
 	return &provcore.Response{StatusCode: 200}, nil

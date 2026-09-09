@@ -8,7 +8,7 @@ import (
 )
 
 // Three ids reach traffic_event and each answers a different question: the
-// row's own id says WHICH ROW, trace_id says which unit of work, and
+// row's own id says WHICH ROW, external_request_id says which request, and
 // external_request_id is the CALLER'S own — recorded as given so an external
 // system can join Nexus rows to its own logs.
 //

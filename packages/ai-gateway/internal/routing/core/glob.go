@@ -7,8 +7,8 @@ import (
 // ModelMatchesAllowedRefs reports whether a model is permitted by the virtual
 // key's allowed-models list. Empty refs = unrestricted.
 //
-// Comparison is EXACT, deliberately. It used to glob ref.ModelID, and a glob
-// here is not merely unused — it makes the admin UI misreport the key.
+// Comparison is EXACT, deliberately. Globbing ref.ModelID here is not merely
+// unused — it makes the admin UI misreport the key.
 //
 // The model-access picker writes concrete model UUIDs on tick and decides a
 // checkbox by exact equality (VirtualKeyCreate.tsx isRefSelected). A ref like

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/alerts/eval"
+	alerteval "github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/alerts/eval"
 	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/observability/consumer"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/schemas/errorcode"
 )
@@ -14,12 +14,12 @@ import (
 // catches keys that have been revoked, expired, or suspended provider-side, and
 // is the signal that a rotation is needed.
 //
-// It used to select those events by "401/403 with no Nexus-side classification",
-// on the contract that an empty error_code meant the upstream rejected us. The
-// gateway classifies every upstream failure, so that condition was unreachable
-// and this rule could not see the cascades it exists to catch.
+// Selecting those events by "401/403 with no Nexus-side classification",
+// on the contract that an empty error_code means the upstream rejected us, does
+// not work: the gateway classifies every upstream failure, so the condition is
+// unreachable and the rule cannot see the cascades it exists to catch.
 //
-// It now selects on errorcode.AuthFailed — the canonical code an adapter stamps
+// It selects on errorcode.AuthFailed instead — the canonical code an adapter stamps
 // when the upstream rejects our key. A 401 the gateway itself produced
 // (AUTH_INVALID_KEY / AUTH_KEY_MISSING: the *caller's* virtual key was wrong)
 // is deliberately excluded; counting it would open a credential's cascade alert

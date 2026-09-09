@@ -7,7 +7,6 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/middleware"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/iam"
 )
 
@@ -30,10 +29,9 @@ func (h *Handler) UpdateSetupState(c echo.Context) error {
 	if err := c.Bind(&body); err != nil {
 		return c.JSON(http.StatusBadRequest, errJSON("Invalid body", "validation_error", ""))
 	}
-	aa := middleware.AdminAuthFromContext(c)
-	updatedBy := ""
-	if aa != nil {
-		updatedBy = aa.KeyID
+	updatedBy, ok := requireAdminActor(c)
+	if !ok {
+		return unauthenticated(c)
 	}
 	if err := h.meta.SetSystemMetadata(c.Request().Context(), "setup-wizard-state", body, updatedBy); err != nil {
 		h.logger.Error("save setup state", "error", err)

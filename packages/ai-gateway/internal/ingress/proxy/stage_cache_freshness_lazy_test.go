@@ -65,14 +65,14 @@ func newLazyFixture(t *testing.T, stub *bodyEchoNormalize, body []byte, applyRul
 	rctx := h.buildRequestContext(req, nil, body, provcore.FormatOpenAI, "gpt-4o", "chat")
 
 	s := &proxyState{
-		h:        h,
-		r:        req,
-		rec:      &audit.Record{},
-		resolved: Ingress{BodyFormat: provcore.FormatOpenAI},
-		rctxFull: rctx,
-		body:     body,
-		modelID:  "gpt-4o",
-		logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+		h:            h,
+		r:            req,
+		rec:          &audit.Record{},
+		resolved:     Ingress{BodyFormat: provcore.FormatOpenAI},
+		rctxFull:     rctx,
+		body:         body,
+		modelID:      "gpt-4o",
+		scopedLogger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 	if stub.calls != 0 {
 		t.Fatalf("fixture normalized %d time(s) at admission; the canonical must still be lazy or every assertion below is vacuous", stub.calls)

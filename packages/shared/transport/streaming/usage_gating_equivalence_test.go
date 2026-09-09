@@ -8,7 +8,7 @@ import (
 )
 
 // This file is the correctness gate for the per-frame work skipped in the three
-// provider usage accumulators (finding C-20). What survives there is one change:
+// provider usage accumulators. What survives there is one change:
 // the anthropic accumulator switches on the event name before spending a validity
 // scan. A byte-level key-absence gate was also shipped and then REVERTED as unsound
 // — see the escape-encoded key frames in usageFrameCorpus for the input that broke

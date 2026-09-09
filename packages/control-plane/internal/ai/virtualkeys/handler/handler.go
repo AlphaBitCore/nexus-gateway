@@ -1,25 +1,24 @@
 // Package virtualkey owns the Control Plane admin API for virtual
 // key CRUD (/api/admin/virtual-keys) + the approval workflow
-// (/approve, /reject, /renew, /revoke). R6 fifth domain extracted
-// from the flat handler/ package; recipe documented in
-// docs/_archive/2026-q2/programs/r6-handler-decomp-runbook.md.
+// (/approve, /reject, /renew, /revoke).
 package virtualkey
 
 import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/httperr"
-	"github.com/goccy/go-json"
 	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
 
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/httperr"
+	"github.com/goccy/go-json"
+
 	"github.com/labstack/echo/v4"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/ai/virtualkeys/vkstore"
-	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/authn"
+	auth "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/authn"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/users/iamstore"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/hub"

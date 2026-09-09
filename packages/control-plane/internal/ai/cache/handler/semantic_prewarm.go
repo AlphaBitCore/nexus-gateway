@@ -22,16 +22,17 @@ package cache
 import (
 	"bytes"
 	"fmt"
-	"github.com/goccy/go-json"
 	"io"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/goccy/go-json"
+
 	"github.com/labstack/echo/v4"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/peer"
-	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
+	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/httpclient"
 )
 
 // prewarmMaxEntries is the maximum number of entries accepted per call.

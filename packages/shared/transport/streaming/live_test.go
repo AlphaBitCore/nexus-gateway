@@ -346,12 +346,11 @@ func (f *flakeyWriter) Write(p []byte) (int, error) {
 // TestLivePipeline_WriterError_ClosesUpstream pins that a writer error still closes the
 // upstream io.Closer.
 //
-// REWRITTEN for finding C-30, rather than left in place: the wedge it was originally written
-// for can no longer happen. It worked by blocking the SECOND upstream.Read until Close fired,
-// which wedged the reader goroutine; with parsing inline there is no second goroutine to
-// wedge, and after a write error Process returns without calling parser.Next() again. So the
-// 2-second deadline no longer discriminates a regression — it is kept only as a liveness
-// guard, and the doc no longer claims otherwise.
+// The wedge this once guarded for cannot happen with parsing inline. It worked by
+// blocking the SECOND upstream.Read until Close fired, wedging the reader goroutine;
+// there is no second goroutine now, and after a write error Process returns without
+// calling parser.Next() again. So the 2-second deadline does not discriminate a
+// regression — it is a liveness guard and nothing more.
 //
 // What still matters, and is still asserted: CloseUpstreamOnExit fires. It is exported and
 // ai-gateway/internal/platform/streaming calls it, and the upstream must not be left open.

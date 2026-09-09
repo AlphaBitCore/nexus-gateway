@@ -102,9 +102,9 @@ type RawConfigLoader func(ctx context.Context) (json.RawMessage, error)
 // BootStore is the canonical 3-service (agent / compliance-proxy /
 // ai-gateway) helper that produces a Store seeded with the admin-
 // configured Policy when available, falling back to DefaultPolicy()
-// otherwise. Each data-plane service was previously hand-rolling the
-// same boot-default → load-raw → decode → log → install cycle, with
-// minor drift between sites; centralising the boilerplate here means:
+// otherwise. Hand-rolling the
+// same boot-default → load-raw → decode → log → install cycle in each
+// data-plane service drifts between sites; centralising it here means:
 //
 //   - the same warn/info log lines fire from every service, so
 //     operators see consistent boot output regardless of which

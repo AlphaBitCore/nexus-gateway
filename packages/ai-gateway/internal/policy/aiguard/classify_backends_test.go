@@ -450,8 +450,8 @@ func (nilRespAdapter) Execute(_ context.Context, _ provcore.Request) (*provcore.
 func (nilRespAdapter) Probe(_ context.Context, _ provcore.CallTarget) (*provcore.ProbeResult, error) {
 	return &provcore.ProbeResult{OK: true}, nil
 }
-func (nilRespAdapter) PrepareBody(req provcore.Request) ([]byte, []string, string, error) {
-	return req.Body, nil, "", nil
+func (nilRespAdapter) PrepareBody(req provcore.Request) (provcore.PreparedBody, error) {
+	return provcore.PreparedBody{Body: req.Body}, nil
 }
 func (nilRespAdapter) ExecuteWithBody(ctx context.Context, req provcore.Request, body []byte, _ []string, _ string) (*provcore.Response, error) {
 	req.Body = body

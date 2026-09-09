@@ -119,6 +119,13 @@ type EncodeResult struct {
 	ContentType string
 	URLOverride string
 	Rewrites    []string
+	// PromptCacheMarked records that this codec turned on the provider's
+	// upstream prompt cache for this body. The codec that writes the marker
+	// is the only thing that knows whether it did — the decision depends on
+	// the caller's own cache_control, which only the codec inspects — so the
+	// audit counter reads this rather than recomputing the predicate and
+	// risking a second copy that disagrees.
+	PromptCacheMarked bool
 }
 
 // DecodeContext carries the originating-request information a response

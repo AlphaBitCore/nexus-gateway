@@ -4,11 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/goccy/go-json"
 	"log/slog"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/goccy/go-json"
 )
 
 // batchMemProducer implements mq.Producer AND the optional batchProducer

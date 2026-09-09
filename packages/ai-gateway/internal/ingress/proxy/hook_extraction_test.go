@@ -14,7 +14,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -23,6 +22,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/goccy/go-json"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
@@ -41,6 +42,7 @@ import (
 	compliance "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/pipeline"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/mq"
+	normcodecs "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/codecs"
 	normalize "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
 )
@@ -152,12 +154,28 @@ func TestExtractRequestContentForHooks_NilMetricsRecorder(t *testing.T) {
 	}
 }
 
-func TestExtractResponseForHooks_NilAdapter_RecordsSkipped(t *testing.T) {
+// canonicalRegistry builds the normalize registry the response-hook path
+// decodes with. The response stage no longer runs the body through a
+// wire-format traffic adapter: the body it receives is already canonical, and
+// decoding it with the canonical codec is what lets a hook see reasoning and
+// refusal — two channels the flat adapter model cannot represent.
+func canonicalRegistry() *normalize.Registry {
+	reg := normalize.NewRegistry()
+	normcodecs.RegisterDefaultAIBuiltins(reg)
+	return reg
+}
+
+const canonicalChatResponseBody = `{"id":"chatcmpl-1","object":"chat.completion","model":"gpt-4o",` +
+	`"choices":[{"index":0,"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],` +
+	`"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`
+
+func TestExtractResponseForHooks_NoRegistry_RecordsSkipped(t *testing.T) {
 	mr := &trackingMetricsRecorder{}
 	h := &Handler{deps: &Deps{Metrics: mr}}
-	got, model, finish := h.extractResponseForHooks(context.Background(), nil, "openai", []byte("hi"), "/v1/chat/completions", slog.Default())
+	got, model, finish := h.extractResponseForHooks(context.Background(), "openai",
+		[]byte(canonicalChatResponseBody), "/v1/chat/completions", slog.Default())
 	if got != nil || model != "" || finish != "" {
-		t.Errorf("expected zero values; got %v/%q/%q", got, model, finish)
+		t.Errorf("expected zero values with no registry wired; got %v/%q/%q", got, model, finish)
 	}
 	if outs := mr.outcomes(); len(outs) != 1 || outs[0] != "skipped" {
 		t.Errorf("outcomes=%v, want [skipped]", outs)
@@ -166,9 +184,9 @@ func TestExtractResponseForHooks_NilAdapter_RecordsSkipped(t *testing.T) {
 
 func TestExtractResponseForHooks_EmptyBody(t *testing.T) {
 	mr := &trackingMetricsRecorder{}
-	h := &Handler{deps: &Deps{Metrics: mr}}
-	adapter := &stubTrafficAdapter{id: "openai"}
-	got, model, finish := h.extractResponseForHooks(context.Background(), adapter, "openai", nil, "/v1/chat/completions", slog.Default())
+	h := &Handler{deps: &Deps{Metrics: mr, NormalizeRegistry: canonicalRegistry()}}
+	got, model, finish := h.extractResponseForHooks(context.Background(), "openai", nil,
+		"/v1/chat/completions", slog.Default())
 	if got != nil || model != "" || finish != "" {
 		t.Errorf("expected zero values; got %v/%q/%q", got, model, finish)
 	}
@@ -177,76 +195,46 @@ func TestExtractResponseForHooks_EmptyBody(t *testing.T) {
 	}
 }
 
-func TestExtractResponseForHooks_AdapterError(t *testing.T) {
+func TestExtractResponseForHooks_DecodeError(t *testing.T) {
 	mr := &trackingMetricsRecorder{}
-	h := &Handler{deps: &Deps{Metrics: mr}}
-	adapter := &stubTrafficAdapter{
-		id: "openai",
-		extractResponse: func(_ context.Context, _ []byte, _ string) (traffic.NormalizedContent, error) {
-			return traffic.NormalizedContent{}, errors.New("decode failed")
-		},
-	}
-	got, model, finish := h.extractResponseForHooks(context.Background(), adapter, "openai", []byte("body"), "/v1/chat/completions", slog.Default())
+	h := &Handler{deps: &Deps{Metrics: mr, NormalizeRegistry: canonicalRegistry()}}
+	got, model, finish := h.extractResponseForHooks(context.Background(), "openai",
+		[]byte("not json at all"), "/v1/chat/completions", slog.Default())
 	if got != nil || model != "" || finish != "" {
-		t.Errorf("expected zero values; got %v/%q/%q", got, model, finish)
+		t.Errorf("a body no codec can decode must yield no hook input; got %v/%q/%q", got, model, finish)
 	}
 	if outs := mr.outcomes(); len(outs) != 1 || outs[0] != "error" {
 		t.Errorf("outcomes=%v, want [error]", outs)
 	}
 }
 
-func TestExtractResponseForHooks_HappyPathWithMetadata(t *testing.T) {
+func TestExtractResponseForHooks_HappyPathReadsModelAndFinishFromCanonical(t *testing.T) {
 	mr := &trackingMetricsRecorder{}
-	h := &Handler{deps: &Deps{Metrics: mr}}
-	adapter := &stubTrafficAdapter{
-		id: "openai",
-		extractResponse: func(_ context.Context, _ []byte, _ string) (traffic.NormalizedContent, error) {
-			return traffic.NormalizedContent{
-				Segments: []string{"hi"},
-				Metadata: map[string]string{"model": "gpt-4o"},
-			}, nil
-		},
-	}
-	got, model, _ := h.extractResponseForHooks(context.Background(), adapter, "openai", []byte("body"), "/v1/chat/completions", slog.Default())
+	h := &Handler{deps: &Deps{Metrics: mr, NormalizeRegistry: canonicalRegistry()}}
+	got, model, finish := h.extractResponseForHooks(context.Background(), "openai",
+		[]byte(canonicalChatResponseBody), "/v1/chat/completions", slog.Default())
 	if got == nil {
-		t.Fatal("expected non-nil payload")
+		t.Fatal("expected a hook payload for a well-formed canonical response")
 	}
 	if model != "gpt-4o" {
-		t.Errorf("model=%q, want gpt-4o", model)
+		t.Errorf("model=%q, want gpt-4o — it comes off the canonical payload now, not adapter metadata", model)
+	}
+	if finish != "stop" {
+		t.Errorf("finishReason=%q, want stop", finish)
+	}
+	if projected := strings.Join(got.TextProjection(), "|"); projected != "hi" {
+		t.Errorf("projection=%q, want the assistant content", projected)
 	}
 	if outs := mr.outcomes(); len(outs) != 1 || outs[0] != "success" {
 		t.Errorf("outcomes=%v, want [success]", outs)
 	}
 }
 
-func TestExtractResponseForHooks_HappyPathNoMetadata(t *testing.T) {
-	mr := &trackingMetricsRecorder{}
-	h := &Handler{deps: &Deps{Metrics: mr}}
-	adapter := &stubTrafficAdapter{
-		id: "openai",
-		extractResponse: func(_ context.Context, _ []byte, _ string) (traffic.NormalizedContent, error) {
-			return traffic.NormalizedContent{Segments: []string{"hi"}}, nil
-		},
-	}
-	got, model, _ := h.extractResponseForHooks(context.Background(), adapter, "openai", []byte("body"), "/v1/chat/completions", slog.Default())
-	if got == nil {
-		t.Fatal("expected non-nil payload")
-	}
-	if model != "" {
-		t.Errorf("model=%q, want empty (no metadata)", model)
-	}
-}
-
 func TestExtractResponseForHooks_NilMetricsRecorder(t *testing.T) {
-	h := &Handler{deps: &Deps{}}
-	adapter := &stubTrafficAdapter{
-		id: "openai",
-		extractResponse: func(_ context.Context, _ []byte, _ string) (traffic.NormalizedContent, error) {
-			return traffic.NormalizedContent{Segments: []string{"hi"}}, nil
-		},
-	}
-	if got, _, _ := h.extractResponseForHooks(context.Background(), adapter, "openai", []byte("b"), "/x", slog.Default()); got == nil {
-		t.Error("expected non-nil payload")
+	h := &Handler{deps: &Deps{NormalizeRegistry: canonicalRegistry()}}
+	if got, _, _ := h.extractResponseForHooks(context.Background(), "openai",
+		[]byte(canonicalChatResponseBody), "/v1/chat/completions", slog.Default()); got == nil {
+		t.Error("expected a hook payload even with no metrics recorder wired")
 	}
 }
 

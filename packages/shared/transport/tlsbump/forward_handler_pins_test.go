@@ -65,8 +65,8 @@ func (softBlockReqHook) SupportsModality(core.Modality) bool     { return true }
 // coFiringRequestResolver wires a request-stage redact hook (fixedModifyHook, returning the
 // masked ModifiedContent) AND a request-stage soft-block hook. mergeResults ranks BlockSoft
 // above Modify (Decision→BlockSoft) while carrying the redact's ModifiedContent — the
-// co-firing shape that, pre-#13, forwarded the ORIGINAL request body upstream because the
-// rewrite arm gated on Decision==Modify.
+// co-firing shape a rewrite arm gated on Decision==Modify forwards UNREDACTED
+// upstream.
 func coFiringRequestResolver(modified []core.ContentBlock) *compliance.PolicyResolver {
 	reg := core.NewHookRegistry()
 	reg.Register("req-redact", func(_ *core.HookConfig) (core.Hook, error) {
@@ -97,11 +97,11 @@ func adapterDomainEngine(t *testing.T, adapterID string) *domain.Engine {
 	return eng
 }
 
-// TestForwardHandler_RequestHookBlockSoftMaskedRedact_ForwardsRedactedUpstream pins #13 leak
-// #4 on the tlsbump REQUEST path (forward_request_phase, previously ZERO-coverage): a redact
-// hook co-firing with a soft-block aggregates to Decision=BLOCK_SOFT while carrying the
-// redact's ModifiedContent. The pre-#13 `case Modify` gate skipped the rewrite and forwarded
-// the ORIGINAL body upstream; the CarriesRedaction() gate now rewrites it, so the upstream
+// TestForwardHandler_RequestHookBlockSoftMaskedRedact_ForwardsRedactedUpstream covers the
+// tlsbump REQUEST path (forward_request_phase): a redact hook co-firing with a
+// soft-block aggregates to Decision=BLOCK_SOFT while carrying the
+// redact's ModifiedContent. A `case Modify` gate skips the rewrite and forwards
+// the ORIGINAL body upstream; the CarriesRedaction() gate rewrites it, so the upstream
 // provider receives the MASKED body and never the original email. The audit row records the
 // aggregate BLOCK_SOFT decision (the redact is the disposition, not the ceiling).
 func TestForwardHandler_RequestHookBlockSoftMaskedRedact_ForwardsRedactedUpstream(t *testing.T) {
@@ -154,12 +154,12 @@ func standaloneSoftBlockResolver() *compliance.PolicyResolver {
 	}, reg, discardSlog())
 }
 
-// TestForwardHandler_StandaloneRequestBlockSoft_Refuses pins the #15 fold-to-block fix on
+// TestForwardHandler_StandaloneRequestBlockSoft_Refuses pins the fold-to-block rule on
 // the tlsbump request path: a standalone soft-block (no co-firing redact → no applicable
 // redaction) folds to the block action and REFUSES the request (403), never forwarding it
-// upstream. Before the fix the switch keyed on Decision==RejectHard only, so a BlockSoft
-// fell through and forwarded the original unredacted body — a request-side leak on the
-// dormant BlockSoft path. The agent fail-open path (richReject=false) returns a bare 403.
+// upstream. A switch keyed on Decision==RejectHard only lets a BlockSoft fall through
+// and forward the original unredacted body — a request-side leak on the dormant
+// BlockSoft path. The agent fail-open path (richReject=false) returns a bare 403.
 func TestForwardHandler_StandaloneRequestBlockSoft_Refuses(t *testing.T) {
 	writer := &recordingAuditWriter{}
 	rt := &bodyCapturingRoundTripper{makeResp: jsonUpstream}
@@ -409,13 +409,13 @@ func TestForwardHandler_DomainBlock_Refuses403(t *testing.T) {
 // whose path action is PASSTHROUGH must forward without running hooks and
 // without a compliance-decision row, while still relaying the upstream body.
 //
-// This used to assert ZERO audit events, which conflated two different things:
-// "no compliance-decision row" (right, nothing was inspected) with "no record at
-// all" (wrong). Measured live, that silence meant a bumped POST — decrypted, its
-// URL and body in hand — left no trace in traffic_event across 64s of polling,
-// while an exemption grant and an emergency bypass both record their
-// non-inspection. The assertion is now the sharper one: exactly one event, and
-// it is a PATH_PASSTHROUGH marker, not an inspection result.
+// Asserting ZERO audit events conflates two different things: "no
+// compliance-decision row" (right, nothing was inspected) with "no record at all"
+// (wrong). Measured live, that silence means a bumped POST — decrypted, its URL
+// and body in hand — leaves no trace in traffic_event at all, while an exemption
+// grant and an emergency bypass both record their non-inspection. The assertion
+// here is the sharper one: exactly one event, and it is a PATH_PASSTHROUGH
+// marker, not an inspection result.
 func TestForwardHandler_DomainPassthrough_SkipsCompliance(t *testing.T) {
 	writer := &recordingAuditWriter{}
 	rt := &capturingRoundTripper{makeResp: jsonUpstream}
@@ -655,9 +655,15 @@ func TestForwardHandler_NonAIFastPath_RelaysAndAuditsNonLLM(t *testing.T) {
 	if got := rt.calls(); got != 1 {
 		t.Fatalf("upstream forwards = %d, want 1", got)
 	}
-	upstreamTx := rt.header(0).Get("X-Nexus-Request-Id")
-	if upstreamTx == "" {
-		t.Fatal("X-Nexus-Request-Id missing on the upstream request — the handler must generate one when the client omits it")
+	// Nothing in the X-Nexus-* namespace may reach the upstream. This is a
+	// passive interception point: the request was addressed to the provider,
+	// not to Nexus, so a header we add announces Nexus to a third party the
+	// caller never told about us — and leaks the id we minted. The value still
+	// exists; it lives on the audit row, asserted below.
+	for name := range rt.header(0) {
+		if strings.HasPrefix(strings.ToLower(name), "x-nexus-") {
+			t.Errorf("%s reached the upstream request — the X-Nexus-* namespace is ours and must not leave the interception point", name)
+		}
 	}
 	events := writer.snapshot()
 	if len(events) != 1 {
@@ -666,8 +672,11 @@ func TestForwardHandler_NonAIFastPath_RelaysAndAuditsNonLLM(t *testing.T) {
 	if events[0].UsageExtractionStatus != "non_llm" {
 		t.Fatalf("UsageExtractionStatus = %q, want non_llm on the non-AI fast path", events[0].UsageExtractionStatus)
 	}
-	if events[0].TransactionID != upstreamTx {
-		t.Fatalf("TransactionID = %q, want the generated id %q stamped upstream", events[0].TransactionID, upstreamTx)
+	// The handler still mints a request id when the client omits one — it is
+	// what stitches this row to the other services' rows for the same request.
+	// It just stays on the row instead of riding out on the wire.
+	if events[0].TransactionID == "" {
+		t.Fatal("TransactionID empty — the handler must still mint a request id for its own audit row")
 	}
 	if via := rec.Header().Get("X-Nexus-Via"); via == "" {
 		t.Fatal("X-Nexus-Via missing — the inspected relay must stamp the via marker")

@@ -190,9 +190,9 @@ function HeroStatus({
     metaArgs = { reason: killSwitch.reason ?? '—' };
   } else if (!sync.inSync || behind > 0) {
     tone = 'warn';
-    titleKey = 'policies.hero.drifted';
-    metaKey = 'policies.hero.driftedMeta';
-    metaArgs = { behind, s: behind === 1 ? '' : 's' };
+    titleKey = 'policies.hero.outOfSync';
+    metaKey = 'policies.hero.outOfSyncMeta';
+    metaArgs = { count: behind };
   } else if (diag?.active) {
     tone = 'warn';
     titleKey = 'policies.hero.diagActive';
@@ -209,7 +209,7 @@ function HeroStatus({
       </div>
       <div className={styles.heroVer}>
         <span className={styles.heroVerNum}>v{sync.desiredVersion}</span>
-        <span className={styles.heroVerLabel}>{t('policies.hero.desired')}</span>
+        <span className={styles.heroVerLabel}>{t('policies.hero.target')}</span>
       </div>
     </section>
   );
@@ -247,9 +247,8 @@ function SyncCard({ sync, locale }: { sync: PolicySyncStatus; locale: string }) 
         <span className={styles.badge} data-tone={sync.inSync ? 'ok' : 'warn'}>
           {sync.inSync
             ? t('policies.sync.inSync')
-            : t('policies.sync.drifted', {
-                behind: Math.max(0, sync.desiredVersion - sync.reportedVersion),
-                s: 's',
+            : t('policies.sync.outOfSync', {
+                count: Math.max(0, sync.desiredVersion - sync.reportedVersion),
               })}
         </span>
       </div>

@@ -1,5 +1,5 @@
-// Extra tests for fleet/shadow package covering all previously-uncovered
-// functions: InsertConfigChangeEvent, ListConfigHistory (all filter branches),
+// Tests for the fleet/shadow functions the main file does not reach:
+// InsertConfigChangeEvent, ListConfigHistory (all filter branches),
 // GetConfigTemplates, GetConfigTemplate, ListConfigTemplateCatalog,
 // UpsertConfigTemplate, UpsertConfigTemplateAt, notifyConfigChanged, decodeJSONB.
 

@@ -1,8 +1,9 @@
 package aiguard
 
 import (
-	"github.com/goccy/go-json"
 	"testing"
+
+	"github.com/goccy/go-json"
 )
 
 func TestRequest_JSONShapeMatchesSpec(t *testing.T) {

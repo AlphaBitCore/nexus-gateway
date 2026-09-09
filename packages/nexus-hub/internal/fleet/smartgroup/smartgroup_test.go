@@ -1,7 +1,6 @@
 // Package smartgroup_test covers Store methods in the smartgroup package
 // using pgxmock — no real Postgres required (Category C DB-bound tests).
 //
-// Architecture reference: docs/developers/architecture/services/hub/nexus-hub-internals-architecture.md (Tier 3).
 // SDD reference: docs/developers/architecture/cross-cutting/foundation/configuration-architecture.md (device-group cascade).
 //
 // Tested methods:

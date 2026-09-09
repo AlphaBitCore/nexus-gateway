@@ -9,8 +9,8 @@ import (
 
 // ExtractStreamChunk must not return segments that alias its input buffer.
 //
-// This is a CONTRACT test, not a coverage test, and it is the precondition for finding
-// C-20's remaining optimization: the SSE Model-A path converts every frame's Data string
+// This is a CONTRACT test, not a coverage test, and it is the precondition for reusing
+// one scratch buffer: the SSE Model-A path converts every frame's Data string
 // to []byte for ExtractStreamChunk, once per frame, and the only way to amortize that is
 // to reuse one scratch buffer across frames. Reuse is safe only if no adapter hands back a
 // string that points into the buffer it was given.
@@ -98,7 +98,7 @@ func TestExtractStreamChunk_SegmentsNeverAliasTheInput(t *testing.T) {
 					t.Errorf("adapter %q, frame %q: segment %d changed after the input buffer was "+
 						"overwritten (%q -> %q).\n"+
 						"The segment aliases the input, so the SSE Model-A path cannot reuse one "+
-						"scratch buffer across frames (finding C-20): strings.Join returns a "+
+						"scratch buffer across frames: strings.Join returns a "+
 						"single segment unchanged, that text is retained in the wireUnit, and the "+
 						"next frame's copy would corrupt it — wrong bytes spliced into a redacted "+
 						"stream, with no error raised. Copy the bytes out before building the "+

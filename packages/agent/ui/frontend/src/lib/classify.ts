@@ -26,32 +26,45 @@ export type Classification =
   | 'bump_failed';
 
 /**
- * Decision tree (first match wins):
- *   1. domainRuleId empty                    → untracked
- *   2. bumpStatus FAILED                     → bump_failed
- *   3. hookDecision deny / reject / block    → blocked
- *   4. hookDecision approve                  → processed
- *   5. action == "deny"                      → blocked
- *   6. fallthrough                           → inspect
+ * Decision tree (first match wins). Mirrors
+ * packages/agent/internal/observability/audit/classify/classify.go —
+ * keep the two in step, they decide the same row.
+ *
+ *   1. bumpStatus FAILED*, on a matched flow      → bump_failed
+ *   2. hookDecision deny / reject / block        → blocked
+ *   3. action == "deny"                          → blocked
+ *   4. hookDecision approve                      → processed
+ *   5. not matched                               → untracked
+ *   6. fallthrough                               → inspect
+ *
+ * The untracked fallback is LAST. Reaching it first and escaping with a
+ * fall-through when action is "inspect"/"deny" gets the same badge here, but
+ * the Go side has no such escape: it classifies the same row "untracked" and,
+ * because untracked is not uploaded at the default level, the denial never
+ * reaches the console while this badge says "blocked". Consulting the
+ * verdicts first says the same thing without the trick.
  */
-export function classify(e: AgentEvent): Classification {
-  // Untracked: host wasn't in interception_domain at all.
-  if (!e.domainRuleId) {
-    // Rows without domainRuleId fall back to the action verb for
-    // classification. action="inspect" or "deny" means a domain was
-    // matched in an older daemon; fall through to the branches below.
-    if (e.action === 'inspect' || e.action === 'deny') {
-      // fall through
-    } else {
-      return 'untracked';
-    }
-  }
+/**
+ * Whether an interception_domain row applied to this flow.
+ *
+ * Normally a stamped domainRuleId. A row from an OLDER DAEMON carries the verb
+ * instead — action "inspect" or "deny" means a domain matched even though no
+ * rule id was recorded. Mirrors matched() in classify.go; naming it once on
+ * each side is what keeps them from disagreeing about which rows count.
+ */
+function matched(e: AgentEvent): boolean {
+  return Boolean(e.domainRuleId) || e.action === 'inspect' || e.action === 'deny';
+}
 
+export function classify(e: AgentEvent): Classification {
   // Bump failures take priority — a non-bumped flow can't have run hooks.
+  // Gated on matched: a transport error on a host we never intended to bump
+  // is not a bump failure.
   if (
-    e.bumpStatus === 'BUMP_FAILED' ||
-    e.bumpStatus === 'BUMP_FAILED_PASSTHROUGH' ||
-    e.bumpStatus === 'BUMP_FAILED_MINT_FALLBACK_RELAY'
+    matched(e) &&
+    (e.bumpStatus === 'BUMP_FAILED' ||
+      e.bumpStatus === 'BUMP_FAILED_PASSTHROUGH' ||
+      e.bumpStatus === 'BUMP_FAILED_MINT_FALLBACK_RELAY')
   ) {
     return 'bump_failed';
   }
@@ -70,6 +83,11 @@ export function classify(e: AgentEvent): Classification {
   // action="deny" without a hook decision still means denied.
   if (e.action === 'deny') {
     return 'blocked';
+  }
+
+  // Only now: no verdict of any kind, and nothing matched.
+  if (!matched(e)) {
+    return 'untracked';
   }
 
   // PathAction PASSTHROUGH explicitly means admin asked us to skip

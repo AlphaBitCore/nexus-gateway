@@ -37,8 +37,13 @@ type oaiStreamDelta struct {
 	Content          *string                       `json:"content,omitempty"`
 	NexusThinking    []provcore.NexusThinkingBlock `json:"nexus_thinking,omitempty"`
 	ReasoningContent string                        `json:"reasoning_content,omitempty"`
-	Role             string                        `json:"role,omitempty"`
-	ToolCalls        []oaiToolCall                 `json:"tool_calls,omitempty"`
+	// Refusal is the structured-outputs decline channel. It must ride its own
+	// key rather than fold into Content: a client watching
+	// choices[].message.refusal to tell a decline from an answer reads nothing
+	// if the refusal text arrives as content.
+	Refusal   string        `json:"refusal,omitempty"`
+	Role      string        `json:"role,omitempty"`
+	ToolCalls []oaiToolCall `json:"tool_calls,omitempty"`
 }
 
 type oaiToolCall struct {

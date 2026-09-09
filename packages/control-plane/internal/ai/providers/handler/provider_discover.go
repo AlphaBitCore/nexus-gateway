@@ -10,8 +10,8 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/peer"
+	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/httpclient"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/iam"
-	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
 )
 
 // RegisterProviderDiscoverRoutes registers the model-discovery route for

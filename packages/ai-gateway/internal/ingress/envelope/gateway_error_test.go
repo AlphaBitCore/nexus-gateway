@@ -103,12 +103,12 @@ func TestWriteGatewayError_AnswersInTheCallersDialect(t *testing.T) {
 // An error whose code is outside the canonical provider set still has a status,
 // and the status is what both vocabularies track.
 //
-// The three mappers key off provcore.Code* and used to return a blanket
-// api_error for anything else — which typed a 404 as a server fault, and
-// covered every gateway-generated error, since those all carry a Nexus
+// The three mappers key off provcore.Code*. Returning a blanket
+// api_error for anything else types a 404 as a server fault, and
+// covers every gateway-generated error, since those all carry a Nexus
 // UPPER_SNAKE code rather than a canonical one. Every pre-existing table for
 // these mappers builds its ProviderError with Status 0, where the fallback and
-// the old default agree, so none of them could tell the two apart.
+// that default agree, so none of them can tell the two apart.
 func TestErrorTypeMappers_FallBackToTheStatusNotToAServerFault(t *testing.T) {
 	for _, tc := range []struct {
 		status            int

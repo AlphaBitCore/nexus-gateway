@@ -650,3 +650,41 @@ func TestIsNotFound(t *testing.T) {
 		t.Error("nil must not satisfy IsNotFound")
 	}
 }
+
+// TestResolveModelCandidates_NilSnapshotIsIndexUnavailable — the same
+// invariant TestGetModelByCode_NilIndex holds, on the one lookup in this file
+// that did not hold it.
+//
+// ResolveModelCandidates walks the Model snapshot instead of an index, and
+// returned (nil, nil) when the snapshot had never loaded. Its callers read an
+// empty candidate list as "the caller named nothing": hydrateRequestedModel
+// then widens every provider-scoped routing rule to every provider, and the
+// simulate preview reports the model as absent from the catalogue. Both are
+// definitive statements about a condition that clears on its own — the class of
+// answer that made six enabled models look deleted for 34 minutes on staging.
+func TestResolveModelCandidates_NilSnapshotIsIndexUnavailable(t *testing.T) {
+	mock, l := newMockLayer(t, Config{})
+	_ = mock
+	got, err := l.ResolveModelCandidates(context.Background(), "gpt-4o")
+	if !IsIndexUnavailable(err) {
+		t.Errorf("an unloaded snapshot must report index-unavailable; got err=%v candidates=%v", err, got)
+	}
+	if got != nil {
+		t.Errorf("no candidates may be returned when nothing was looked up; got %v", got)
+	}
+}
+
+// The other half: once the snapshot is loaded, a code the catalogue does not
+// carry really is absent, and must stay an empty-with-nil-error miss so the
+// routing paths that treat that as "not a catalogue model" keep working.
+func TestResolveModelCandidates_LoadedSnapshotMissIsEmptyNotError(t *testing.T) {
+	mock, l := newMockLayer(t, Config{})
+	primeSnapshots(t, mock, l)
+	got, err := l.ResolveModelCandidates(context.Background(), "definitely-not-a-model")
+	if err != nil {
+		t.Fatalf("a miss against a loaded snapshot must not error; got %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("expected no candidates for an unknown code; got %v", got)
+	}
+}

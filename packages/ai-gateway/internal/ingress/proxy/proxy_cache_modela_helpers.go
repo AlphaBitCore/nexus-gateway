@@ -24,7 +24,7 @@ import (
 // bytes (not total canonical bytes) so reasoning/non-content chunks do not evict
 // redactable content from the window early.
 func modelAContentSize(c provcore.Chunk) int {
-	n := len(c.Delta)
+	n := len(c.Delta) + len(c.RefusalDelta) + len(c.ReasoningDelta)
 	for _, d := range c.ToolCallDeltas {
 		n += len(d.Arguments) + len(d.Name) + len(d.ID)
 	}
@@ -62,34 +62,36 @@ func stampModelAResponseHook(rec *audit.Record, acc *responseHookAccumulator, re
 // probe cannot be built (no cache, build error, or no response rules), it returns
 // an "always confirm" prescan so the gate fails safe to a full confirm on every
 // checkpoint rather than silently skipping enforcement.
-// buildResponsePrescan returns the cheap union prefilter for the Model-A relay AND the
+// buildResponsePrescan returns the cheap union prefilter for the Model-A relay, the
 // flush-before-deliver lookahead (modela.Config.MaxPatternBytes) DERIVED from the
 // resolved response pipeline's longest contiguous enforceable match — floored at
-// modela.DefaultMaxPatternBytes so it never drops below the proven-safe baseline. The
-// lookahead is the package default whenever no pipeline resolves (always-confirm path).
-func (h *Handler) buildResponsePrescan(ctx context.Context, s *streamState) (func([]byte) bool, int) {
+// modela.DefaultMaxPatternBytes so it never drops below the proven-safe baseline — and the
+// rule-set generation the bound came from. The lookahead is the package default whenever no
+// pipeline resolves (always-confirm path), and the generation is 0 there: nothing was
+// derived from a rule set, so nothing is scoped to one.
+func (h *Handler) buildResponsePrescan(ctx context.Context, s *streamState) (func([]byte) bool, int, uint64) {
 	alwaysConfirm := func([]byte) bool { return true }
 	if h.deps == nil || h.deps.HookConfigCache == nil {
-		return alwaysConfirm, modela.DefaultMaxPatternBytes
+		return alwaysConfirm, modela.DefaultMaxPatternBytes, 0
 	}
 	var epType hookcore.EndpointType
 	if ingress, ok := IngressFromContext(s.r.Context()); ok {
 		epType = typology.KindFromWireShape(ingress.WireShape)
 	}
 	modalities := []hookcore.Modality{hookcore.ModalityText}
-	probe, err := h.deps.HookConfigCache.Resolver(ctx).BuildPipeline(
+	probe, _, err := h.deps.HookConfigCache.Resolver(ctx).BuildPipeline(
 		"response", "AI_GATEWAY", epType, modalities,
 		5*time.Second, 15*time.Second, false, true, /* strictFailClosed */
 		s.logger,
 	)
 	if err != nil || probe == nil {
-		return alwaysConfirm, modela.DefaultMaxPatternBytes
+		return alwaysConfirm, modela.DefaultMaxPatternBytes, 0
 	}
 	maxPattern := modela.DefaultMaxPatternBytes
 	if bound, _ := probe.MaxPatternBound(); bound > maxPattern {
 		maxPattern = bound // a longer contiguous enforceable pattern needs a wider lookahead
 	}
-	return probe.MayMatchRawContent, maxPattern
+	return probe.MayMatchRawContent, maxPattern, probe.RuleSetGeneration()
 }
 
 // writeEncodedChunk forward-encodes one canonical BODY chunk through the shared

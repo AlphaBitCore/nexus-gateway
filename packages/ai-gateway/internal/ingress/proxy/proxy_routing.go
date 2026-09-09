@@ -9,6 +9,8 @@ import (
 
 	"github.com/tidwall/gjson"
 
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specutil"
+
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/auth/vkauth"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/audit"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/policy/quota"
@@ -228,7 +230,11 @@ func requestRequiresStructuredOutput(body []byte) bool {
 			return true
 		}
 	}
-	return gjson.GetBytes(body, "generationConfig.responseSchema").IsObject()
+	// Both spellings. The Gemini ingress forwards responseSchema under either,
+	// so reading only camelCase here let routing pick a candidate that cannot
+	// honour a schema the request does carry — the two halves disagreeing about
+	// the same body.
+	return specutil.GeminiFirstBytes(body, specutil.GeminiGenerationConfigPaths).Get("responseSchema").IsObject()
 }
 
 // parseEmbeddingRequest extracts the embedding request parameters from

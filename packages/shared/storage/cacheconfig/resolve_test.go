@@ -26,10 +26,10 @@ func TestResolve_AllTiersFallthrough(t *testing.T) {
 }
 
 func TestResolve_NoGlobalTier_OnlyAdapterAndProviderSourcesAppear(t *testing.T) {
-	// Tier 1 is retired. Every knob must resolve from Tier 2 / Tier 3 / code
-	// default — no knob may ever be attributed to a global tier, and the two
-	// knobs Tier 1 used to carry (normaliser_enabled, cache_master_kill_switch)
-	// must not appear in the effective view at all.
+	// There is no Tier 1. Every knob must resolve from Tier 2 / Tier 3 / code
+	// default — no knob may ever be attributed to a global tier — and neither
+	// normaliser_enabled nor cache_master_kill_switch may appear in the
+	// effective view at all.
 	blob := CacheConfigBlob{
 		Adapters: map[string]AdapterConfig{
 			"anthropic": {MarkerInjectEnabled: bp(true)},
@@ -276,5 +276,102 @@ func TestAllowedKnobs(t *testing.T) {
 	}
 	if got := AllowedKnobs(FamilyNone); got != nil {
 		t.Errorf("None family allowed knobs: want nil, got %v", got)
+	}
+}
+
+// MarkerInjectEnabledFor is the hot-path sibling of Resolve: the request path
+// asks it on every Anthropic-bound call, so it must agree with Resolve exactly
+// while allocating nothing. Asserting the AGREEMENT rather than a hand-written
+// expectation is what stops the two from drifting into different answers for
+// the same blob.
+func TestMarkerInjectEnabledFor_AgreesWithResolve(t *testing.T) {
+	yes, no := true, false
+	for _, tc := range []struct {
+		name    string
+		blob    CacheConfigBlob
+		adapter string
+	}{
+		{"empty blob", CacheConfigBlob{}, "anthropic"},
+		{"family on", CacheConfigBlob{Adapters: map[string]AdapterConfig{
+			"anthropic": {MarkerInjectEnabled: &yes}}}, "anthropic"},
+		{"family off", CacheConfigBlob{Adapters: map[string]AdapterConfig{
+			"anthropic": {MarkerInjectEnabled: &no}}}, "anthropic"},
+		{"provider override beats family", CacheConfigBlob{
+			Adapters:  map[string]AdapterConfig{"anthropic": {MarkerInjectEnabled: &yes}},
+			Providers: map[string]ProviderConfig{"p": {MarkerInjectEnabled: &no}}}, "anthropic"},
+		{"provider override opts in", CacheConfigBlob{
+			Adapters:  map[string]AdapterConfig{"anthropic": {MarkerInjectEnabled: &no}},
+			Providers: map[string]ProviderConfig{"p": {MarkerInjectEnabled: &yes}}}, "anthropic"},
+		{"bedrock shares the family", CacheConfigBlob{Adapters: map[string]AdapterConfig{
+			"bedrock": {MarkerInjectEnabled: &yes}}}, "bedrock"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			want := Resolve(tc.blob, "p", tc.adapter).MarkerInjectEnabled
+			if got := MarkerInjectEnabledFor(tc.blob, "p", tc.adapter); got != want {
+				t.Fatalf("lean lookup = %v, Resolve = %v — the two must never disagree", got, want)
+			}
+		})
+	}
+}
+
+// Adapters outside the Anthropic family have no marker knob at all. FamilyOf
+// is the single definition of which those are, so a caller cannot answer this
+// question by carrying its own list of adapter names.
+func TestMarkerInjectEnabledFor_NonAnthropicFamilyIsAlwaysOff(t *testing.T) {
+	yes := true
+	blob := CacheConfigBlob{
+		Adapters:  map[string]AdapterConfig{"openai": {MarkerInjectEnabled: &yes}},
+		Providers: map[string]ProviderConfig{"p": {MarkerInjectEnabled: &yes}},
+	}
+	for _, adapter := range []string{"openai", "gemini", "vertex", "deepseek", ""} {
+		if MarkerInjectEnabledFor(blob, "p", adapter) {
+			t.Errorf("adapter %q is not an Anthropic-wire family and must answer off", adapter)
+		}
+	}
+}
+
+// The request path calls this on every Anthropic-bound request, so it must not
+// allocate. Resolve does, because it builds a Sources map for the admin UI —
+// that difference is the whole reason this function exists.
+func TestMarkerInjectEnabledFor_AllocatesNothing(t *testing.T) {
+	yes := true
+	blob := CacheConfigBlob{Adapters: map[string]AdapterConfig{
+		"anthropic": {MarkerInjectEnabled: &yes}}}
+	if n := testing.AllocsPerRun(100, func() {
+		_ = MarkerInjectEnabledFor(blob, "p", "anthropic")
+	}); n != 0 {
+		t.Fatalf("hot-path lookup allocated %v times per call, want 0", n)
+	}
+}
+
+// The boundary lookup is the marker lookup's sibling and must agree with
+// Resolve for the same reason: two answers to one question drift.
+func TestMarkerBoundary3EnabledFor_AgreesWithResolve(t *testing.T) {
+	yes, no := true, false
+	for _, tc := range []struct {
+		name    string
+		blob    CacheConfigBlob
+		adapter string
+	}{
+		{"empty", CacheConfigBlob{}, "anthropic"},
+		{"family on", CacheConfigBlob{Adapters: map[string]AdapterConfig{
+			"anthropic": {MarkerBoundary3Enabled: &yes}}}, "anthropic"},
+		{"provider override off", CacheConfigBlob{
+			Adapters:  map[string]AdapterConfig{"anthropic": {MarkerBoundary3Enabled: &yes}},
+			Providers: map[string]ProviderConfig{"p": {MarkerBoundary3Enabled: &no}}}, "anthropic"},
+		{"bedrock shares the family", CacheConfigBlob{Adapters: map[string]AdapterConfig{
+			"bedrock": {MarkerBoundary3Enabled: &yes}}}, "bedrock"},
+		{"non-anthropic wire", CacheConfigBlob{Adapters: map[string]AdapterConfig{
+			"openai": {MarkerBoundary3Enabled: &yes}}}, "openai"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			want := Resolve(tc.blob, "p", tc.adapter).MarkerBoundary3Enabled
+			if tc.adapter != "anthropic" && tc.adapter != "bedrock" {
+				want = false // Resolve fills code defaults for any adapter; the lean lookup gates on family.
+			}
+			if got := MarkerBoundary3EnabledFor(tc.blob, "p", tc.adapter); got != want {
+				t.Fatalf("lean lookup = %v, want %v", got, want)
+			}
+		})
 	}
 }

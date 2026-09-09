@@ -7,6 +7,25 @@ import (
 	"sync"
 )
 
+// frameTerminator and doneMarker are the two constants this package writes to
+// the wire, held as bytes rather than passed to io.WriteString.
+//
+// The previous comment here claimed io.WriteString does not allocate for these,
+// because http.ResponseWriter implements StringWriter. That is true of the
+// concrete response, and false of what actually reaches these functions: the
+// stream capture tee embeds the http.ResponseWriter INTERFACE, and the interface
+// does not declare WriteString, so nothing is promoted, io.WriteString's
+// assertion fails, and it falls back to w.Write([]byte(s)) — a fresh slice for a
+// constant, measured at half an allocation per SSE frame on the relay.
+//
+// The general form is worth remembering: embedding an interface narrows a
+// wrapper's method set to what the interface declares, so a fast path that is
+// selected by asserting for an optional method silently stops being taken.
+var (
+	frameTerminator = []byte("\n")
+	doneMarker      = []byte("data: [DONE]\n\n")
+)
+
 // sseWireBufPool holds the scratch line buffer WriteTypedEvent assembles each
 // SSE line into. One frame is a handful of short writes, so the buffer is small
 // and its whole purpose is to keep those writes off the heap.
@@ -83,16 +102,13 @@ func WriteTypedEvent(w io.Writer, eventType, data string) error {
 		rest = rest[i+1:]
 	}
 
-	// io.WriteString hands a constant to writers that implement StringWriter —
-	// http.ResponseWriter and bytes.Buffer both do — so it does not allocate.
-	_, err := io.WriteString(w, "\n")
+	_, err := w.Write(frameTerminator)
 	return err
 }
 
-// WriteDone writes the [DONE] marker. io.WriteString rather than fmt for the
-// same reason as above: this is a constant, and fmt would box it.
+// WriteDone writes the [DONE] marker.
 func WriteDone(w io.Writer) error {
-	_, err := io.WriteString(w, "data: [DONE]\n\n")
+	_, err := w.Write(doneMarker)
 	return err
 }
 

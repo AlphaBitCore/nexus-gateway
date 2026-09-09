@@ -429,7 +429,7 @@ func TestTextProjection_AIBlocksAndToolResults(t *testing.T) {
 			{Role: core.RoleSystem, Content: []core.ContentBlock{{Type: core.ContentText, Text: "system"}}},
 			{Role: core.RoleUser, Content: []core.ContentBlock{{Type: core.ContentText, Text: ""}, {Type: core.ContentText, Text: "user-text"}}},
 			{Role: core.RoleAssistant, Content: []core.ContentBlock{
-				{Type: core.ContentReasoning, Text: "thought (skipped by default)"},
+				{Type: core.ContentReasoning, Text: "thought"},
 				{Type: core.ContentToolUse, ToolUse: &core.ToolUse{Name: "x"}}, // unaccounted type
 				{Type: core.ContentToolResult, ToolResult: &core.ToolResult{Output: "tool-out"}},
 				{Type: core.ContentToolResult, ToolResult: nil},                          // nil tool result skipped
@@ -438,7 +438,9 @@ func TestTextProjection_AIBlocksAndToolResults(t *testing.T) {
 		},
 	}
 	got := p.TextProjection()
-	want := []string{"system", "user-text", "tool-out"}
+	// Reasoning sits between the user text and the tool result, and projects
+	// like any other delivered text.
+	want := []string{"system", "user-text", "thought", "tool-out"}
 	if len(got) != len(want) {
 		t.Fatalf("len = %d (%v) want %d", len(got), got, len(want))
 	}
@@ -449,7 +451,7 @@ func TestTextProjection_AIBlocksAndToolResults(t *testing.T) {
 	}
 }
 
-func TestTextProjectionWith_IncludeReasoning(t *testing.T) {
+func TestTextProjection_ReasoningIsScanned(t *testing.T) {
 	p := &core.NormalizedPayload{
 		Kind: core.KindAIChat,
 		Messages: []core.Message{
@@ -460,10 +462,11 @@ func TestTextProjectionWith_IncludeReasoning(t *testing.T) {
 			}},
 		},
 	}
-	got := p.TextProjectionWith(core.TextProjectionOptions{IncludeReasoning: true})
+	got := p.TextProjection()
 	want := []string{"let me think", "answer"}
 	if len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
-		t.Fatalf("opt-in reasoning = %v want %v", got, want)
+		t.Fatalf("projection = %v, want %v — reasoning is delivered to the client, so a "+
+			"compliance rule has to be able to match it", got, want)
 	}
 }
 

@@ -8,7 +8,7 @@ import (
 )
 
 // The product's model-access rule, and the reason this filter survived the
-// removal of the stage-0 narrowing it used to share a function with: a routed
+// stage-0 narrowing it no longer shares a function with: a routed
 // model must be on the virtual key's allow list.
 //
 // These two cases carry over verbatim from the narrowing engine's tests. They

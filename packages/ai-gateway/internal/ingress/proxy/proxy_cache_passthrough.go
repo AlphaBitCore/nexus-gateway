@@ -16,12 +16,10 @@ import (
 //
 // Three-service alignment: this delegates to
 // shared.Passthrough — the same relay used by tlsbump (agent +
-// compliance-proxy). Previously this file carried a near-duplicate
-// io.Copy + flushingWriter implementation; now there is one
-// passthrough relay across all three services. The shared
-// helper handles per-read flush against http.Flusher writers and
-// respects context cancellation, matching what the original local
-// impl did.
+// compliance-proxy), so there is one passthrough relay across all
+// three services rather than a near-duplicate io.Copy +
+// flushingWriter here. The shared helper handles per-read flush
+// against http.Flusher writers and respects context cancellation.
 //
 // What admins should expect from this mode:
 //   - bytes flow client-bound as fast as upstream delivers them

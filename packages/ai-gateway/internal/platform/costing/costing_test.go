@@ -99,7 +99,7 @@ func TestRates_Priced(t *testing.T) {
 // TestEstimateUSD_CachedShareBilledAtCacheRate is the core regression: prompt
 // tokens are the TOTAL input, so the cached share must be subtracted from the
 // uncached remainder and billed at its own rate. Billing the full prompt at the
-// input rate — what the router and the AI Guard classifier used to do — charges
+// input rate — what a two-tier formula does — charges
 // the cached tokens twice over at the wrong price.
 func TestEstimateUSD_CachedShareBilledAtCacheRate(t *testing.T) {
 	r := Rates{InputUSDPerM: 2.50, OutputUSDPerM: 10.00, CacheReadUSDPerM: 0.625, CacheWriteUSDPerM: 3.125}

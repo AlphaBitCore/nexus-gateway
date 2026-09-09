@@ -8,6 +8,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
+	"strings"
+
 	streamcache "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/cache/stream"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/execution/executor"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/ingress/debug"
@@ -23,7 +25,6 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic/adapters"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
-	"strings"
 )
 
 // RouteDeps carries every subsystem the HTTP route layer needs.
@@ -108,6 +109,7 @@ func MountCoreRoutes(mux *http.ServeMux, deps RouteDeps) http.Handler {
 		Allowlist:                 deps.Allowlist,
 		CachePricing:              deps.CacheLayer,
 		Normaliser:                deps.NormEngine,
+		PromptCache:               deps.PromptCache,
 		GeminiCacheMgrSet:         deps.GeminiCacheMgrSet,
 		PassthroughCache:          deps.PassthroughCache,
 		LatencyDetail:             deps.Config.Observability.LatencyDetail,

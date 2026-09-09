@@ -4,11 +4,12 @@ package wiring
 import (
 	"context"
 	"fmt"
-	"github.com/goccy/go-json"
 	"log/slog"
 	"os"
 	"strconv"
 	"time"
+
+	"github.com/goccy/go-json"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/config"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/audit"

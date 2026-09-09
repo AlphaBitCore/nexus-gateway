@@ -55,9 +55,9 @@ type AIGuardModelLookup interface {
 // caller must still be able to serve the request with cost left at zero rather
 // than fail it (fail-open). Either way it logs one Warn naming the model id, so
 // a pricing-row gap in the catalog is visible instead of silently reproducing a
-// positive-only vendor-spend under-report — an unpriced router model previously
-// produced $0 with no signal at all, which left the day looking reconciled and
-// kept the branch's own no_basis alert asleep.
+// positive-only vendor-spend under-report — an unpriced router model otherwise
+// produces $0 with no signal at all, which leaves the day looking reconciled and
+// keeps the branch's own no_basis alert asleep.
 func newModelPriceLookup(ctx context.Context, models AIGuardModelLookup, logger *slog.Logger, caller string) func(modelID string) (costing.Rates, bool) {
 	return func(modelID string) (costing.Rates, bool) {
 		if models == nil {
@@ -223,16 +223,14 @@ func (s *WriterBackedTrafficSink) Emit(ctx context.Context, e aiguard.TrafficEve
 		cacheStatus = audit.CacheStatusHit
 	}
 	rec := &audit.Record{
-		// No RequestID: this row is emitted by the gateway itself, not by a
-		// caller, so there is no caller correlation value to record. Each row
-		// gets its own traffic_event id from the audit writer, and TraceID
-		// below joins it back to the request that triggered the classify.
-		RequestID: "",
-		// TraceID carries the triggering user request's correlation id so
-		// this ai-guard cost row (fresh RequestID, internal_purpose='ai-guard')
-		// is joinable back to the user-traffic row that invoked the hook.
-		// Empty when the classify call carried no request id on its context.
-		TraceID: e.TraceID,
+		// The triggering request's id, so this ai-guard cost row
+		// (internal_purpose='ai-guard', fresh row id) is joinable back to the
+		// user-traffic row that invoked the hook. Empty when the classify call
+		// carried no request id on its context.
+		RequestID: e.RequestID,
+		// Only the caller's own inbound trace reaches trace_id; empty is the
+		// honest answer for a caller who runs no tracing.
+		TraceID: e.CallerTraceID,
 		// status_code=200: this row genuinely is a successful classify call
 		// (failed classify returns earlier with e.Decision empty and
 		// ErrorDetail set, so this code path only stamps successful
@@ -267,7 +265,7 @@ func (s *WriterBackedTrafficSink) Emit(ctx context.Context, e aiguard.TrafficEve
 		// so the classifier's charge is auditable from its own row: prompt,
 		// how much of it was cached, and the resulting cost. Without them a
 		// reader could not tell a correct cache-discounted charge from the
-		// full-rate over-charge this row used to carry.
+		// full-rate over-charge.
 		CacheReadTokens:     int64(e.CacheReadTokens),
 		CacheCreationTokens: int64(e.CacheCreationTokens),
 		// RoutedProviderID/-Name identify the provider that actually served

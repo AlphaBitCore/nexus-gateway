@@ -27,9 +27,30 @@ func fp(f float64) *float64 { return &f }
 
 var dsarCols = []string{"id", "subjectId", "contact", "type", "status", "notes", "completedAt", "outcome", "createdAt", "createdBy", "updatedAt", "updatedBy"}
 
+// dsarListCols is the LIST projection — dsarCols without outcome. pgxmock
+// replays columns by position and never executes the SQL, so a list test built
+// on dsarCols would keep passing if the outcome column came back into the
+// SELECT. Keeping the two column sets distinct is what makes the omission
+// visible to a test at all.
+var dsarListCols = []string{"id", "subjectId", "contact", "type", "status", "notes", "completedAt", "createdAt", "createdBy", "updatedAt", "updatedBy"}
+
 func dsarRow(id string) []any {
 	return []any{id, "subj1", sp("a@x.com"), "ACCESS", "PENDING", sp("n"), (*time.Time)(nil), json.RawMessage(`{}`), tNow, "admin", tNow, (*string)(nil)}
 }
+
+func dsarListRow(id string) []any {
+	return []any{id, "subj1", sp("a@x.com"), "ACCESS", "PENDING", sp("n"), (*time.Time)(nil), tNow, "admin", tNow, (*string)(nil)}
+}
+
+// Assignment-window fixtures for the dead-letter stage. Spelled as constants
+// because the boundary is the property under test: an event one second before
+// the assignment belongs to whoever held the device then, not to this subject.
+var erasureWindowStart = time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+
+const (
+	erasureInWindow     = "2026-03-02T00:00:00Z"
+	erasureBeforeWindow = "2026-02-28T23:59:59Z"
+)
 
 func newMock(t *testing.T) (*Store, pgxmock.PgxPoolIface) {
 	t.Helper()
@@ -46,16 +67,24 @@ func TestListDSARRequests(t *testing.T) {
 	// status filter present → 1 filter arg; limit defaults nothing (passed 10).
 	m.ExpectQuery(`SELECT COUNT\(\*\) FROM dsar_request`).WithArgs("PENDING").
 		WillReturnRows(pgxmock.NewRows([]string{"c"}).AddRow(1))
-	m.ExpectQuery(`FROM dsar_request`).WithArgs("PENDING", 10, 0).
-		WillReturnRows(pgxmock.NewRows(dsarCols).AddRow(dsarRow("d1")...))
+	// The regex pins that the SELECT does NOT name outcome. dsar_request.outcome
+	// holds the subject's full ACCESS export — user record, group memberships,
+	// traffic rows, inline prompt/response bodies — and projecting it into the
+	// list returned a page of that for every listed subject, walkable by paging.
+	m.ExpectQuery(`SELECT id, subject_id, contact, type, status, notes, completed_at,\s+"createdAt"`).
+		WithArgs("PENDING", 10, 0).
+		WillReturnRows(pgxmock.NewRows(dsarListCols).AddRow(dsarListRow("d1")...))
 	reqs, total, err := s.ListDSARRequests(context.Background(), "PENDING", 10, 0)
 	if err != nil || total != 1 || len(reqs) != 1 || reqs[0].ID != "d1" || reqs[0].Type != "ACCESS" {
 		t.Fatalf("ListDSARRequests: %+v total=%d err=%v", reqs, total, err)
 	}
+	if reqs[0].Outcome != nil {
+		t.Fatalf("the list carried a subject's persisted export: %s", reqs[0].Outcome)
+	}
 	// limit<=0 defaults to 20 (no status filter → 0 filter args, then 20,0).
 	s2, m2 := newMock(t)
 	m2.ExpectQuery(`SELECT COUNT`).WithArgs().WillReturnRows(pgxmock.NewRows([]string{"c"}).AddRow(0))
-	m2.ExpectQuery(`FROM dsar_request`).WithArgs(20, 0).WillReturnRows(pgxmock.NewRows(dsarCols))
+	m2.ExpectQuery(`FROM dsar_request`).WithArgs(20, 0).WillReturnRows(pgxmock.NewRows(dsarListCols))
 	if _, _, err := s2.ListDSARRequests(context.Background(), "", 0, 0); err != nil {
 		t.Fatalf("limit default: %v", err)
 	}
@@ -327,8 +356,47 @@ func expectErasureHappy(m pgxmock.PgxPoolIface) {
 	m.ExpectQuery(`SELECT COUNT`).WithArgs("subj1").
 		WillReturnRows(pgxmock.NewRows([]string{"count"}).AddRow(2))
 	m.ExpectExec(`UPDATE traffic_event_payload`).WithArgs("subj1").WillReturnResult(pgxmock.NewResult("UPDATE", 4))
-	m.ExpectExec(`UPDATE traffic_event\s+SET entity_id = NULL`).WithArgs("subj1").WillReturnResult(pgxmock.NewResult("UPDATE", 3))
-	m.ExpectExec(`UPDATE traffic_event t\s+SET source_ip = NULL`).WithArgs("subj1").WillReturnResult(pgxmock.NewResult("UPDATE", 2))
+	// The two anonymise statements name every column EXHAUSTIVELY on purpose.
+	// pgxmock never executes SQL — it matches this regex and replays a canned
+	// result — so a prefix like `SET entity_id = NULL` stays green while a
+	// column silently disappears from the erasure. Art.17 completeness is
+	// exactly the property a prefix match cannot hold down: dropping
+	// error_reason (which quotes provider 4xx text back at the subject) or a
+	// hooks-pipeline column would leave the suite green and the erasure
+	// incomplete. Adding a column to the SQL must break this line too — that
+	// is the point; update it deliberately.
+	m.ExpectExec(`UPDATE traffic_event\s+SET entity_id = NULL, entity_name = NULL, identity = NULL, source_ip = NULL,\s+error_reason = NULL,\s+request_hook_reason = NULL, response_hook_reason = NULL,\s+request_hooks_pipeline = NULL, response_hooks_pipeline = NULL`).WithArgs("subj1").WillReturnResult(pgxmock.NewResult("UPDATE", 3))
+	m.ExpectExec(`UPDATE traffic_event t\s+SET source_ip = NULL, source_process = NULL, entity_name = NULL, identity = NULL,\s+thing_name = NULL,\s+error_reason = NULL,\s+request_hook_reason = NULL, response_hook_reason = NULL,\s+request_hooks_pipeline = NULL, response_hooks_pipeline = NULL`).WithArgs("subj1").WillReturnResult(pgxmock.NewResult("UPDATE", 2))
+	// The dead-letter stage: assignment windows are read first, then every DLQ
+	// row is decoded in Go, and only the subject's are deleted. The payload
+	// column is opaque to SQL, so this stage cannot be a predicate like the
+	// ones above — which is exactly why the DLQ went unerased.
+	m.ExpectQuery(`SELECT da\."deviceId", da\."assignedAt", da\."releasedAt"\s+FROM "DeviceAssignment" da`).
+		WithArgs("subj1").
+		WillReturnRows(pgxmock.NewRows([]string{"deviceId", "assignedAt", "releasedAt"}).
+			AddRow("dev-1", erasureWindowStart, (*time.Time)(nil)))
+	m.ExpectQuery(`SELECT id, payload FROM traffic_event_dlq`).
+		WillReturnRows(pgxmock.NewRows([]string{"id", "payload"}).
+			// The subject's own gateway event.
+			AddRow("dlq-mine", []byte(`{"source":"ai-gateway","entityId":"subj1"}`)).
+			// Another subject's — must survive.
+			AddRow("dlq-theirs", []byte(`{"source":"ai-gateway","entityId":"subj2"}`)).
+			// The subject's device, inside the assignment window.
+			AddRow("dlq-device", []byte(`{"source":"agent","thingId":"dev-1","timestamp":"`+erasureInWindow+`"}`)).
+			// Same device BEFORE the subject held it — the previous holder's
+			// traffic, and deleting it would erase someone else's record.
+			AddRow("dlq-before", []byte(`{"source":"agent","thingId":"dev-1","timestamp":"`+erasureBeforeWindow+`"}`)).
+			// Truncated mid-object, and this fixture is chosen with care:
+			// goccy/go-json populates every field it managed to read BEFORE
+			// returning the error, so this payload arrives with source and
+			// entityId already matching the subject. A decode error that is
+			// not respected would delete it on the strength of a read that
+			// failed. `not json` cannot prove that — it decodes to a zero
+			// Source, which the switch already refuses for another reason.
+			AddRow("dlq-truncated", []byte(`{"source":"ai-gateway","entityId":"subj1"`)))
+	m.ExpectExec(`DELETE FROM traffic_event_dlq WHERE id = ANY\(\$1\)`).
+		WithArgs([]string{"dlq-mine", "dlq-device"}).
+		WillReturnResult(pgxmock.NewResult("DELETE", 2))
 	m.ExpectExec(`DELETE FROM "AssistantMemory"`).WithArgs("subj1").WillReturnResult(pgxmock.NewResult("DELETE", 1))
 	m.ExpectExec(`DELETE FROM "AssistantSession"`).WithArgs("subj1").WillReturnResult(pgxmock.NewResult("DELETE", 2))
 	m.ExpectExec(`DELETE FROM "AssistantFile"`).WithArgs("subj1").WillReturnResult(pgxmock.NewResult("DELETE", 3))
@@ -344,8 +412,15 @@ func expectErasureHappy(m pgxmock.PgxPoolIface) {
 	m.ExpectExec(`DELETE FROM "UserFederatedIdentity" WHERE "userId" = \$1`).WithArgs("subj1").WillReturnResult(pgxmock.NewResult("DELETE", 3))
 	m.ExpectExec(`DELETE FROM "RefreshToken" WHERE "userId" = \$1`).WithArgs("subj1").WillReturnResult(pgxmock.NewResult("DELETE", 4))
 	m.ExpectExec(`DELETE FROM "ScimToken" WHERE "createdBy" = \$1`).WithArgs("subj1").WillReturnResult(pgxmock.NewResult("DELETE", 1))
-	m.ExpectExec(`DELETE FROM "IamGroupMembership" WHERE "principalType" = 'admin_user' AND "principalId" = \$1`).WithArgs("subj1").WillReturnResult(pgxmock.NewResult("DELETE", 2))
-	m.ExpectExec(`DELETE FROM "IamPolicyAttachment" WHERE "principalType" = 'admin_user' AND "principalId" = \$1`).WithArgs("subj1").WillReturnResult(pgxmock.NewResult("DELETE", 1))
+	// $2 carries the CANONICAL principal type. Asserted through WithArgs
+	// because the regex can no longer see it: with the value bound rather
+	// than inlined, a pattern match alone would accept the session spelling
+	// that #122 was about. "nexus_user" is spelled out rather than taken from
+	// the constant so a change to it has to be looked at here too.
+	m.ExpectExec(`DELETE FROM "IamGroupMembership" WHERE "principalType" = \$2 AND "principalId" = \$1`).
+		WithArgs("subj1", "nexus_user").WillReturnResult(pgxmock.NewResult("DELETE", 2))
+	m.ExpectExec(`DELETE FROM "IamPolicyAttachment" WHERE "principalType" = \$2 AND "principalId" = \$1`).
+		WithArgs("subj1", "nexus_user").WillReturnResult(pgxmock.NewResult("DELETE", 1))
 	m.ExpectExec(`DELETE FROM "NexusUser" WHERE id = \$1`).WithArgs("subj1").WillReturnResult(pgxmock.NewResult("DELETE", 1))
 }
 
@@ -364,6 +439,15 @@ func TestFulfillDSARErasure(t *testing.T) {
 	}
 	if res.PayloadsScrubbed != 4 {
 		t.Errorf("PayloadsScrubbed = %d; want 4", res.PayloadsScrubbed)
+	}
+	// Two of the five dead-lettered rows are the subject's. The other three are
+	// the assertion that matters: another subject's event, the same device
+	// before the subject held it, and a payload that decodes to nothing must
+	// all survive an erasure that is not theirs.
+	if res.DLQEventsDeleted != 2 {
+		t.Errorf("DLQEventsDeleted = %d; want 2 — the subject's dead-lettered events "+
+			"carry the same free-text the live scrub clears, and nothing else in this "+
+			"transaction can reach them", res.DLQEventsDeleted)
 	}
 	// Deprecated and structurally zero: the traffic_event_normalized sidecar is
 	// gone, so there is no second copy of the text to scrub. Pinned rather than

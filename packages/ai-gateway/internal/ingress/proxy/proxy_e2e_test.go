@@ -9,13 +9,14 @@ package proxy
 
 import (
 	"context"
-	"github.com/goccy/go-json"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/goccy/go-json"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/prometheus/client_golang/prometheus"
@@ -105,6 +106,7 @@ func TestServeProxy_NonStreamHappyPath_DriversHandleNonStream(t *testing.T) {
 	t.Cleanup(depsHT.Stop)
 
 	deps := &Deps{
+		NormalizeRegistry: canonicalRegistry(),
 		VKAuth: &stubVKAuthCacheTest{meta: &vkauth.VKMeta{
 			ID:               "vk-1",
 			Name:             "test-vk",
@@ -195,6 +197,7 @@ func TestServeProxy_NonStream_UpstreamErrorPath(t *testing.T) {
 	t.Cleanup(depsHT.Stop)
 
 	deps := &Deps{
+		NormalizeRegistry: canonicalRegistry(),
 		VKAuth: &stubVKAuthCacheTest{meta: &vkauth.VKMeta{
 			ID: "vk-1", Name: "vk", OrganizationID: "org",
 		}},
@@ -293,6 +296,7 @@ func TestServeProxy_NonStream_CacheMISS_DirectPath(t *testing.T) {
 	t.Cleanup(depsHT.Stop)
 
 	deps := &Deps{
+		NormalizeRegistry: canonicalRegistry(),
 		VKAuth: &stubVKAuthCacheTest{meta: &vkauth.VKMeta{
 			ID: "vk-1", Name: "vk", OrganizationID: "org",
 		}},
@@ -399,6 +403,7 @@ func TestServeProxy_NonStream_BrokerMISS_LeaderWritesCache(t *testing.T) {
 	t.Cleanup(depsHT.Stop)
 
 	deps := &Deps{
+		NormalizeRegistry: canonicalRegistry(),
 		VKAuth: &stubVKAuthCacheTest{meta: &vkauth.VKMeta{
 			ID: "vk-1", Name: "vk", OrganizationID: "org",
 		}},
@@ -511,6 +516,7 @@ func TestServeProxy_Stream_DirectPath(t *testing.T) {
 	t.Cleanup(depsHT.Stop)
 
 	deps := &Deps{
+		NormalizeRegistry: canonicalRegistry(),
 		VKAuth: &stubVKAuthCacheTest{meta: &vkauth.VKMeta{
 			ID: "vk-1", Name: "vk", OrganizationID: "org",
 		}},
@@ -622,6 +628,7 @@ func TestServeProxy_Stream_BrokerMISS_LeaderPath(t *testing.T) {
 	t.Cleanup(depsHT.Stop)
 
 	deps := &Deps{
+		NormalizeRegistry: canonicalRegistry(),
 		VKAuth: &stubVKAuthCacheTest{meta: &vkauth.VKMeta{
 			ID: "vk-1", Name: "vk", OrganizationID: "org",
 		}},

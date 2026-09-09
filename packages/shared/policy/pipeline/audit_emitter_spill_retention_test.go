@@ -41,28 +41,19 @@ func (m *memSpill) Stat(context.Context) (spillstore.Stats, error) {
 	return spillstore.Stats{Backend: "mem"}, nil
 }
 
-// TestBuildEvent_SpilledBodyStaysRefOnly is what survives finding #61's deletion.
+// TestBuildEvent_SpilledBodyStaysRefOnly asserts, unconditionally and at any
+// size, that a spilled body never carries its bytes on the container. Both the
+// small and the over-2-MiB case are covered: retaining a large body in memory
+// is the expensive way to break this, and the audit queue holds up to ~1000
+// events until flush.
 //
-// Two tests here used to exercise AuditEmitter.WithPreSpillNormalize, an opt-in that re-attached
-// up to 2 MiB of a spilled body in memory so a writer's flush-time normalize pass could read it
-// without a spill-store fetch. It was deleted with owner approval: nothing called it, and the
-// applyNormalize its own doc named as the sole consumer does not exist anywhere in the repo. Those
-// two tests went with it, since their premise is gone.
-//
-// This one is kept and broadened, because it asserts the invariant that REMAINS — and it is now
-// unconditional rather than the no-opt-in branch of a choice: a spilled body must never carry its
-// bytes on the container, at any size. Both the small and over-2-MiB cases are covered, the
-// latter because it was the size the deleted cap governed, so removing the cap must not start
-// retaining large bodies.
-//
-// It also carries the wire-form assertion folded in from the deleted test: Body.MarshalJSON must
-// emit the ref alone for a spill container. That guard is independent of the deleted feature —
-// dropping it along with the test would have silently lost coverage of a payload-leak path on a
-// DLP product.
+// It also carries the wire form: Body.MarshalJSON must emit the ref alone for a
+// spill container. That is a payload-leak path on a DLP product, and nothing
+// else covers it.
 func TestBuildEvent_SpilledBodyStaysRefOnly(t *testing.T) {
 	const secret = "hello"
 	small := []byte(`{"model":"gpt-4o","messages":[{"role":"user","content":"` + secret + `"}]}`)
-	large := bytes.Repeat([]byte("a"), (2<<20)+1) // past the cap the deleted opt-in used
+	large := bytes.Repeat([]byte("a"), (2<<20)+1) // comfortably past any in-memory cap
 
 	for _, tc := range []struct {
 		name string

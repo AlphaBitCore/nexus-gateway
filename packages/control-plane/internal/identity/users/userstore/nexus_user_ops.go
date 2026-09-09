@@ -210,11 +210,34 @@ func (store *Store) CreateNexusUser(ctx context.Context, p CreateNexusUserParams
 		pwdHash = p.PasswordHash
 	}
 
-	row := store.pool.QueryRow(ctx, fmt.Sprintf(`
-		INSERT INTO "NexusUser" (id, "displayName", email, "passwordHash", "canAccessControlPlane", "organizationId", "createdBy", source, "createdAt", "updatedAt")
-		VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
-		RETURNING %s
-	`, nexusUserSafeColumns), p.DisplayName, p.Email, pwdHash, canAccess, p.OrganizationID, p.CreatedBy, source)
+	// The column is omitted rather than bound to NULL when the caller gave no
+	// organisation.
+	//
+	// identity.prisma declares `organizationId String @default("default")` —
+	// NOT NULL, with a DB-level default. Listing the column and binding a nil
+	// *string sends an explicit NULL, and an explicit NULL defeats a column
+	// default: every create without an org id died on the not-null constraint
+	// and surfaced as HTTP 500 "Failed to create user", with the real cause
+	// (SQLSTATE 23502) visible only in the server log.
+	//
+	// Omitting the column is what lets the default apply, and it keeps the
+	// schema as the single source of truth for what that default IS. Copying
+	// the literal 'default' into Go would work today and drift the first time
+	// the schema changes it.
+	var row pgx.Row
+	if p.OrganizationID != nil {
+		row = store.pool.QueryRow(ctx, fmt.Sprintf(`
+			INSERT INTO "NexusUser" (id, "displayName", email, "passwordHash", "canAccessControlPlane", "organizationId", "createdBy", source, "createdAt", "updatedAt")
+			VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
+			RETURNING %s
+		`, nexusUserSafeColumns), p.DisplayName, p.Email, pwdHash, canAccess, p.OrganizationID, p.CreatedBy, source)
+	} else {
+		row = store.pool.QueryRow(ctx, fmt.Sprintf(`
+			INSERT INTO "NexusUser" (id, "displayName", email, "passwordHash", "canAccessControlPlane", "createdBy", source, "createdAt", "updatedAt")
+			VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, NOW(), NOW())
+			RETURNING %s
+		`, nexusUserSafeColumns), p.DisplayName, p.Email, pwdHash, canAccess, p.CreatedBy, source)
+	}
 
 	var u NexusUserSafe
 	err := row.Scan(&u.ID, &u.DisplayName, &u.Email, &u.Status, &u.CanAccessControlPlane, &u.Source, &u.LastLoginAt, &u.PreferredTimezone, &u.CreatedAt, &u.UpdatedAt)

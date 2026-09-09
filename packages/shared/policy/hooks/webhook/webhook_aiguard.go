@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
+	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/httpclient"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
-	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
 )
 
 // rsTokenHeader is the internal-service auth header AI-Guard validates. It MUST
@@ -133,7 +133,6 @@ func NewWebhookForwardWithOptions(cfg *core.HookConfig, opts Options) (core.Hook
 		client:                client,
 		payloadMode:           mode,
 		onMatch:               onMatch,
-		projectionOpts:        cfg.ProjectionOptions(),
 		internalToken:         opts.InternalToken,
 		trustedAIGuardBases:   opts.TrustedAIGuardBases,
 		endpointScheme:        epScheme,

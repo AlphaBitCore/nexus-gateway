@@ -270,13 +270,15 @@ func TestResolveL1CacheScope_NilSafe(t *testing.T) {
 	}
 }
 
-func TestResolveL1CacheScope_MissingIDFallsFleetWide(t *testing.T) {
-	// vary_by=org but the record carries no org id → no usable scope, fall back
-	// to fleet-wide rather than producing an "org:" token with an empty id.
+func TestResolveL1CacheScope_MissingIDNarrowsToTheVirtualKey(t *testing.T) {
+	// vary_by=org but the record carries no org id. The scope must NOT become an
+	// "org:" token with an empty id, and it must NOT become fleet-wide either —
+	// the operator asked for isolation stricter than the default, so the answer
+	// narrows to the virtual key, which is always present.
 	cc := newConfigCacheVaryBy("org")
 	rec := &audit.Record{VirtualKeyID: "vk-1"}
-	if got := resolveL1CacheScope(cc, rec); got != "" {
-		t.Errorf("org vary_by with empty org id: got %q, want empty", got)
+	if got := resolveL1CacheScope(cc, rec); got != "vk:vk-1" {
+		t.Errorf("org vary_by with empty org id: got %q, want the virtual-key fallback %q", got, "vk:vk-1")
 	}
 }
 
@@ -639,13 +641,24 @@ func TestScheduleL2Write_VaryByResolvesScope(t *testing.T) {
 // blockingWriter parks every Write until released, modelling an embedding
 // provider slow enough for write-back to fall behind the arrival rate.
 type blockingWriter struct {
-	release chan struct{}
-	called  atomic.Int32
+	release     chan struct{}
+	releaseOnce sync.Once
+	called      atomic.Int32
 }
 
-func newBlockingWriter() *blockingWriter {
-	return &blockingWriter{release: make(chan struct{})}
+func newBlockingWriter(t *testing.T) *blockingWriter {
+	t.Helper()
+	b := &blockingWriter{release: make(chan struct{})}
+	// Unblock however the test ends. A t.Fatalf with writers still parked
+	// leaves their slots held, and the gate is process-wide: the next test
+	// would inherit them and fail for a reason that is not about it.
+	t.Cleanup(b.releaseAll)
+	return b
 }
+
+// releaseAll is idempotent so the success path can release early without
+// racing the cleanup that guarantees the failure path releases at all.
+func (b *blockingWriter) releaseAll() { b.releaseOnce.Do(func() { close(b.release) }) }
 
 func (b *blockingWriter) Write(ctx context.Context, _ semantic.WriteRequest) (semantic.WriteResult, error) {
 	b.called.Add(1)
@@ -656,12 +669,44 @@ func (b *blockingWriter) Write(ctx context.Context, _ semantic.WriteRequest) (se
 	return semantic.WriteResult{}, nil
 }
 
-// withL2WriteMax swaps the process-wide cap for the duration of a test.
+// waitL2WriteGateIdle blocks until no L2 write slot is outstanding.
+//
+// scheduleL2Write releases its slot inside the detached goroutine, after the
+// writer returns — so a sibling test that returns the moment its stub signals
+// writeDone can still be holding a slot when the next test starts. Locally
+// that window is microseconds. On a two-core CI runner under -race it
+// stretched far enough to hand the cap test below a foreign slot, and the
+// arithmetic gave it away: a burst of 20 against a cap of 4 shed 17. Four
+// admitted plus seventeen shed is twenty-one events from twenty calls. The
+// foreign slot also made the exact-inflight check pass by coincidence (one
+// stranger plus three of ours), so the only symptom left was the liveness poll
+// timing out — which reads as a capacity defect and is not one.
+func waitL2WriteGateIdle(t *testing.T, when string) {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		if l2WriteInflight.Load() == 0 {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("L2 write slots still held %s: inflight=%d — a write goroutine never "+
+		"released its slot", when, l2WriteInflight.Load())
+}
+
+// withL2WriteMax swaps the process-wide cap for the duration of a test, and
+// brackets it with the idle barrier. The barrier is not politeness: a test
+// that counts admissions against a process-wide gate is only exact if it
+// starts from zero.
 func withL2WriteMax(t *testing.T, n int64) {
 	t.Helper()
+	waitL2WriteGateIdle(t, "on entry")
 	prev := l2WriteMax.Load()
 	l2WriteMax.Store(n)
-	t.Cleanup(func() { l2WriteMax.Store(prev) })
+	t.Cleanup(func() {
+		waitL2WriteGateIdle(t, "on exit")
+		l2WriteMax.Store(prev)
+	})
 }
 
 // A burst larger than the cap must admit exactly the cap and drop the rest,
@@ -674,7 +719,7 @@ func TestScheduleL2Write_ShedsBeyondInflightCap(t *testing.T) {
 	const burst = 20
 	withL2WriteMax(t, capacity)
 
-	w := newBlockingWriter()
+	w := newBlockingWriter(t)
 	h := &Handler{deps: &Deps{SemanticWriter: w, SemanticConfigCache: enabledFleetCache(), CredManager: &stubCredManager{}}}
 	shedBefore := testutil.ToFloat64(l2WriteShedTotal)
 
@@ -689,13 +734,11 @@ func TestScheduleL2Write_ShedsBeyondInflightCap(t *testing.T) {
 	// l2WriteShedTotal in the CALLER, synchronously, so both are exact the
 	// moment the burst loop returns — no waiting, nothing to race.
 	//
-	// This used to poll w.called, which a writer increments from inside its own
-	// goroutine. That measures whether the runtime got round to scheduling the
-	// write, which is not the property the test is named for and is not
-	// guaranteed on a loaded machine: CI observed 3 of 4 admitted writes having
-	// started after five seconds and failed the run, while admission had been
-	// correct all along. A test that reports a scheduler delay as a capacity
-	// defect teaches the reader to re-run reds.
+	// Polling w.called, which a writer increments from inside its own
+	// goroutine, measures whether the runtime got round to scheduling the
+	// write — not the property this test is named for. It is kept below as a
+	// separate liveness statement, behind the idle barrier that makes the
+	// counts above exact.
 	if got := l2WriteInflight.Load(); got != capacity {
 		t.Fatalf("slots held after the burst = %d; want exactly the cap %d — the gate admitted "+
 			"the wrong number", got, capacity)
@@ -707,23 +750,21 @@ func TestScheduleL2Write_ShedsBeyondInflightCap(t *testing.T) {
 	// Liveness, kept separate from admission: an admitted write must actually
 	// run. Its failure means the runtime never scheduled the goroutine, which is
 	// a different statement from "the cap was wrong". This is a "does it ever
-	// happen" check, not a "does it happen fast" one, so the budget is generous:
-	// a loaded CI box running many test binaries in parallel can take seconds
-	// just to schedule four goroutines, and a 5 s budget turned that scheduler
-	// delay into a spurious red (observed on the release CI). 30 s still trips
-	// promptly on a genuine never-scheduled hang.
+	// happen" check, not a "does it happen fast" one, so the budget is generous
+	// — a loaded CI box can take seconds just to schedule four goroutines.
 	deadline := time.Now().Add(30 * time.Second)
 	for w.called.Load() < capacity && time.Now().Before(deadline) {
 		time.Sleep(2 * time.Millisecond)
 	}
 	if got := w.called.Load(); got != capacity {
-		t.Fatalf("admitted writes that actually started = %d of %d after 5s; the gate admitted "+
-			"the right number, so this is the runtime not scheduling them", got, capacity)
+		t.Fatalf("admitted writes that actually started = %d of %d after 30s; the gate "+
+			"admitted the right number, so this is the runtime not scheduling them",
+			got, capacity)
 	}
 
 	// Slots must come back when the stalled writes drain, otherwise one slow
 	// window would disable L2 write-back for the rest of the process's life.
-	close(w.release)
+	w.releaseAll()
 	fresh := newStubWriter()
 	h2 := &Handler{deps: &Deps{SemanticWriter: fresh, SemanticConfigCache: enabledFleetCache(), CredManager: &stubCredManager{}}}
 	// Fresh budget: the liveness poll above may have consumed part of its own

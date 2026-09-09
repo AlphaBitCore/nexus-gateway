@@ -210,8 +210,15 @@ func TestUploadAgentAudit_NoNormalizedUploadNoStamp(t *testing.T) {
 	}
 }
 
-func TestUploadAgentAudit_EnqueueErrorBreaks(t *testing.T) {
-	// First enqueue succeeds, second fails → loop breaks; only e1 accepted.
+func TestUploadAgentAudit_EnqueueErrorNamesTheUnpersistedRemainder(t *testing.T) {
+	// First enqueue succeeds, the second fails, so the loop breaks. The
+	// response is still a 200 with a PARTIAL accepted list, so unless the
+	// remainder is named the caller reads that partial list as a complete
+	// delivery and e2/e3 are lost with no error anywhere — silently, on the
+	// path that carries compliance evidence.
+	//
+	// Asserting only "e1 accepted" would pin the lossy behaviour under a name
+	// that reads like coverage.
 	mp := &mockProducer{enqErr: errors.New("mq down"), enqAfter: 1}
 	h := &AgentAuditAPI{MQProducer: mp}
 	evs := []AgentAuditEvent{{ID: "e1"}, {ID: "e2"}, {ID: "e3"}}
@@ -221,10 +228,33 @@ func TestUploadAgentAudit_EnqueueErrorBreaks(t *testing.T) {
 	}
 	var resp struct {
 		Accepted []string `json:"accepted"`
+		Rejected []string `json:"rejected"`
 	}
 	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
 	if len(resp.Accepted) != 1 || resp.Accepted[0] != "e1" {
-		t.Fatalf("only e1 should be accepted before break: %+v", resp.Accepted)
+		t.Fatalf("only e1 reached the queue: %+v", resp.Accepted)
+	}
+	if len(resp.Rejected) != 2 || resp.Rejected[0] != "e2" || resp.Rejected[1] != "e3" {
+		t.Fatalf("every event after the failure is un-persisted and must be named so the "+
+			"caller can retry exactly those; got rejected=%+v", resp.Rejected)
+	}
+}
+
+// The additive field must stay ABSENT on the happy path, so an older client
+// decoding this response sees exactly what it saw before.
+func TestUploadAgentAudit_NoRejectedKeyWhenNothingFailed(t *testing.T) {
+	h := &AgentAuditAPI{MQProducer: &mockProducer{}}
+	evs := []AgentAuditEvent{{ID: "e1"}, {ID: "e2"}}
+	rec := post(t, h, mustEvents(t, evs), true, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if _, present := raw["rejected"]; present {
+		t.Errorf("rejected must be omitted when empty; body was %s", rec.Body.String())
 	}
 }
 
@@ -271,10 +301,27 @@ func TestUploadAgentAudit_RejectsForgedAttribution(t *testing.T) {
 	if env["thingId"] != "thing-1" {
 		t.Errorf("thingId = %v; want thing-1 (authenticated identity preserved)", env["thingId"])
 	}
-	for _, k := range []string{"entityType", "entityId", "entityName", "orgId", "orgName", "identity", "apiKeyFingerprint"} {
+	for _, k := range []string{"entityType", "entityId", "entityName", "orgId", "orgName", "apiKeyFingerprint"} {
 		if v, ok := env[k]; ok && v != "" && v != nil {
 			t.Errorf("SEC-C5-01: forged %q leaked into the MQ envelope: %v", k, v)
 		}
+	}
+	// identity is the one attribution field that is REPLACED rather than
+	// blanked. The node's self-asserted object must not survive — that is the
+	// forgery this test exists for — but what replaces it has to be the
+	// "resolve me" marker, not an empty string. Blanking it too was a real bug:
+	// the enricher selects on identity->>'status' = 'pending', an empty string
+	// carries no 'status', and so every agent row's entity_* stayed NULL for
+	// good while two comments in the producer promised downstream resolution.
+	gotIdentity, _ := env["identity"].(map[string]any)
+	if gotIdentity == nil {
+		t.Fatalf("SEC-C5-01: identity = %v; want the server-authored pending marker", env["identity"])
+	}
+	if _, forged := gotIdentity["sub"]; forged {
+		t.Errorf("SEC-C5-01: the node's self-asserted identity survived: %v", gotIdentity)
+	}
+	if gotIdentity["status"] != "pending" {
+		t.Errorf("identity.status = %v, want \"pending\" — without it the enricher never picks this row up", gotIdentity["status"])
 	}
 }
 

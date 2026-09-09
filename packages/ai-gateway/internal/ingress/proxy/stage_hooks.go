@@ -17,6 +17,7 @@ import (
 	routingcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/decision"
 	hookcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
+	compliance "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/pipeline"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
 	normcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/typology"
@@ -57,7 +58,7 @@ func (st requestHooksStage) run() bool {
 			s.rec.ComplianceCoverage = cov
 		}
 	} else {
-		rewrittenBody, reqHookResult, rejected := h.runRequestHooks(s.r, s.w, s.rec, s.requestID, s.body, requestHookTarget, s.resolved, s.phaseTimer, s.logger)
+		rewrittenBody, reqHookResult, rejected := h.runRequestHooks(s.r, s.w, s.rec, s.requestID, s.body, requestHookTarget, s.resolved, s.phaseTimer, s.log())
 		if rejected {
 			return false
 		}
@@ -109,7 +110,7 @@ func (h *Handler) runRequestHooks(r *http.Request, w http.ResponseWriter, rec *a
 
 	resolver := h.deps.HookConfigCache.Resolver(r.Context())
 	buildStart := time.Now()
-	pipeline, err := resolver.BuildPipeline(
+	pipeline, unbuildable, err := resolver.BuildPipeline(
 		"request", "AI_GATEWAY",
 		endpointType,
 		inputModality,
@@ -125,7 +126,7 @@ func (h *Handler) runRequestHooks(r *http.Request, w http.ResponseWriter, rec *a
 	}
 	if pipeline == nil {
 		// No hooks → extraction skipped. Still emit the traffic-extract counter
-		// (it previously fired here as a side effect of always extracting) so the
+		// (it fires here rather than as a side effect of always extracting) so the
 		// exported series keeps moving on the hooks-OFF path; outcome "skipped"
 		// records that no extraction ran.
 		if h.deps.Metrics != nil {
@@ -133,6 +134,12 @@ func (h *Handler) runRequestHooks(r *http.Request, w http.ResponseWriter, rec *a
 		}
 		// No hook ran → no redaction demand → persist the captured body as-is.
 		rec.RequestAction = hookcore.ActionApprove
+		// A nil pipeline has two causes that look identical from here: nothing is
+		// configured, or EVERYTHING configured failed to build. In the second
+		// case the tag normally rides the merge, and the merge never runs — so
+		// the row for a request that went out with no PII detector reads exactly
+		// like the row for a tenant that never asked for one. Stamp it here.
+		rec.ComplianceTags = mergeTagSets(rec.ComplianceTags, compliance.UnbuildableTags(unbuildable))
 		// Coverage honesty (multimodal only): no pipeline was configured, so
 		// NOTHING was scanned — record "none", never let the operator assume
 		// a hook policy covered this request.
@@ -153,6 +160,11 @@ func (h *Handler) runRequestHooks(r *http.Request, w http.ResponseWriter, rec *a
 	// (extraction here never fed them). Any backslash, or any hook that cannot
 	// prefilter, falls through to full extraction — soundness over coverage.
 	var normalized *normcore.NormalizedPayload
+	// canonBody is the canonical chat body `normalized` was decoded from, and is
+	// non-nil only on the canonical lane. Its presence is what tells the redaction
+	// arm below that it can write edits back through the one canonical rewriter
+	// instead of the per-format positional path.
+	var canonBody []byte
 	prefiltered := perfHookPrefilter() &&
 		bytes.IndexByte(body, '\\') < 0 &&
 		!pipeline.MayMatchRawContent(body)
@@ -164,6 +176,19 @@ func (h *Handler) runRequestHooks(r *http.Request, w http.ResponseWriter, rec *a
 	case multimodalUserTextPaths(endpointType) != nil:
 		// Multimodal JSON routes extract gateway-locally (see helper).
 		normalized = h.extractMultimodalForHooks(endpointType, ingressFormat, body, pt)
+	case endpointType == typology.EndpointKindChat:
+		// The waist. Hooks see the canonical spec, not a per-format flattening
+		// of it — see canonicalRequestForHooks. A nil canonical means the body
+		// is not one the chat codecs can read; the extraction below is the
+		// fallback, and it is fail-closed on rewrite.
+		extractStart := time.Now()
+		canonBody, normalized = h.canonicalRequestForHooks(r.Context(), in.BodyFormat, body, logger)
+		if canonBody == nil {
+			normalized = h.extractRequestContentForHooks(r.Context(), trafficAdapter, ingressFormat, body, r.URL.Path, logger)
+		}
+		if pt != nil {
+			pt.MarkBetween(traffic.PhaseHookExtract, time.Since(extractStart))
+		}
 	default:
 		extractStart := time.Now()
 		normalized = h.extractRequestContentForHooks(r.Context(), trafficAdapter, ingressFormat, body, r.URL.Path, logger)
@@ -232,8 +257,8 @@ func (h *Handler) runRequestHooks(r *http.Request, w http.ResponseWriter, rec *a
 	// error-taxonomy-architecture.md — there is no soft-block client response.
 	// The `!CarriesRedaction()` guard keeps a BlockSoft that MASKS a co-firing redact
 	// out of this arm so it falls through to the redaction arm below and redact-forwards
-	// (the #13 invariant): RejectHard never carries redaction, so its behavior is
-	// unchanged.
+	// (the carries-redaction invariant): RejectHard never carries redaction, so
+	// this arm is the only one that has to check.
 	if hookcore.ActionFromDecision(hookResult.Decision) == hookcore.ActionBlock && !hookResult.CarriesRedaction() {
 		// Write X-Nexus-Hook and via before writeError commits the status
 		// line, so the client sees the marker even on hook-rejected 4xx responses.
@@ -257,20 +282,30 @@ func (h *Handler) runRequestHooks(r *http.Request, w http.ResponseWriter, rec *a
 	// inconsistency and surfaces as 500.
 	if hookResult.CarriesRedaction() {
 		rewriteStart := time.Now()
-		rewriteContent := rewriteContentWithToolArgs(hookResult.ModifiedContent, normalized, hookResult.TransformSpans)
-		rewritten, n, rErr := trafficAdapter.RewriteRequestBody(r.Context(), body, r.URL.Path, rewriteContent)
+		var rewritten []byte
+		var n int
+		var rErr error
+		if canonBody != nil {
+			// Canonical lane: the spans address canonical blocks, one rewriter
+			// writes them back into the canonical body, and the client's own
+			// codec returns it to their wire. No per-format rewrite, and no
+			// tool-arg masking guard — the canonical rewriter writes tool-call
+			// arguments on every format rather than only where a masker exists.
+			rewritten, n, rErr = h.applyCanonicalRequestRedaction(canonBody, normalized, hookResult.TransformSpans)
+		} else {
+			rewriteContent := rewriteContentWithToolArgs(hookResult.ModifiedContent, normalized, hookResult.TransformSpans)
+			rewritten, n, rErr = trafficAdapter.RewriteRequestBody(r.Context(), body, r.URL.Path, rewriteContent)
+			// Guard: only the OpenAI adapter reconstructs masked tool-call
+			// arguments onto its wire (traffic.ToolArgMasker). A non-masker
+			// ingress adapter masks text but silently drops ToolCallArgs — so a
+			// successful rewrite carrying masked tool args would forward the
+			// tool-arg PII UNMASKED upstream while the audit stamps it redacted.
+			if rErr == nil {
+				rErr = traffic.GuardToolArgMasking(trafficAdapter, rewriteContent)
+			}
+		}
 		if pt != nil {
 			pt.MarkBetween(traffic.PhaseHookRewrite, time.Since(rewriteStart))
-		}
-		// Guard: only the OpenAI adapter reconstructs masked tool-call arguments
-		// onto its wire (traffic.ToolArgMasker). A non-masker ingress adapter
-		// (anthropic/gemini) masks text but silently drops ToolCallArgs — so a
-		// successful (nil) rewrite that carried masked tool args would forward the
-		// tool-arg PII UNMASKED upstream while the audit stamps it redacted. Fail
-		// closed instead, mirroring the tlsbump path. No-op when no tool arg was
-		// masked or the adapter is a masker.
-		if rErr == nil {
-			rErr = traffic.GuardToolArgMasking(trafficAdapter, rewriteContent)
 		}
 		if rErr == nil && !signedGeminiRequestToolCallsPreserved(body, rewritten) {
 			logger.Error("request redaction modified signed Gemini tool call — failing closed")

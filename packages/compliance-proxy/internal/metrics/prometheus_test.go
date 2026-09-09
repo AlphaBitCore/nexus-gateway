@@ -5,7 +5,7 @@
 // CounterVec/GaugeVec/HistogramVec.
 //
 // Pattern mirrors packages/compliance-proxy/internal/config/cache/metrics_test.go
-// and packages/compliance-proxy/internal/audit/coverage_gaps_test.go: use a
+// and packages/ai-gateway/internal/platform/audit/coverage_gaps_test.go: use a
 // fresh *prometheus.Registry per call to avoid cross-test registration
 // collisions, then Gather() to assert behaviour by Prometheus name.
 package metrics

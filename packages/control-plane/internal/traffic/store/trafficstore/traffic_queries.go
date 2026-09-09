@@ -42,12 +42,16 @@ type TrafficEvent struct {
 	RequestHooksUs   *int            `json:"requestHooksUs,omitempty"`
 	ResponseHooksUs  *int            `json:"responseHooksUs,omitempty"`
 	LatencyBreakdown json.RawMessage `json:"latencyBreakdown,omitempty"`
-	// Request tracing
+	// Request correlation. TraceID is the caller's W3C trace id, present only
+	// when the caller sent a traceparent. ExternalRequestID is the request id
+	// — X-Nexus-Request-Id or its X-Request-Id alias, minted when neither
+	// arrived — and is the key that stitches one request's rows across
+	// services.
 	TraceID           *string `json:"traceId,omitempty"`
 	ExternalRequestID *string `json:"externalRequestId,omitempty"`
 	// Caller-declared correlation tags. EndUserID is the caller's own
-	// customer id (X-Nexus-End-User-Id header or protocol-native user
-	// field); SessionID groups a conversation's requests
+	// customer id (X-Nexus-End-User-Id header only — a protocol's native user
+	// field means something else); SessionID groups a conversation's requests
 	// (X-Nexus-Session-Id header only). Both opaque, VK-scoped, never
 	// validated or joined to Nexus identities. NULL for compliance-proxy
 	// and agent rows.
@@ -242,6 +246,11 @@ type TrafficEventListParams struct {
 	// columns. Exact match; both ride the [end_user_id, timestamp] /
 	// [session_id, timestamp] indexes so a correlation pivot stays cheap
 	// at any table size.
+	// TraceID filters to the caller's own W3C trace. It is how an operator
+	// arrives from the caller's APM: they hold a trace id from Datadog or
+	// Jaeger and want the gateway's rows for it. Exact match, backed by the
+	// partial index on trace_id.
+	TraceID              string
 	EndUserID            string
 	SessionID            string
 	HookDecision         string

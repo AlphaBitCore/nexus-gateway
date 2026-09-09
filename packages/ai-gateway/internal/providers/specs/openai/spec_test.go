@@ -79,7 +79,7 @@ func TestPrepareBody_ReasoningQuirk_ChatAndResponsesAgree(t *testing.T) {
 	ad := testAdapter(t)
 	const model = "gpt-5.6-luna"
 
-	chatBody, chatRW, _, err := ad.PrepareBody(provdispatch.Request{
+	chatPrep, err := ad.PrepareBody(provdispatch.Request{
 		WireShape:  typology.WireShapeOpenAIChat,
 		BodyFormat: provcore.FormatOpenAI,
 		Body:       []byte(`{"model":"` + model + `","messages":[],"temperature":0.7,"top_p":0.9}`),
@@ -88,8 +88,9 @@ func TestPrepareBody_ReasoningQuirk_ChatAndResponsesAgree(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PrepareBody(chat): %v", err)
 	}
+	chatBody, chatRW := chatPrep.Body, chatPrep.Rewrites
 
-	respBody, respRW, _, err := ad.PrepareBody(provdispatch.Request{
+	respPrep, err := ad.PrepareBody(provdispatch.Request{
 		WireShape:  typology.WireShapeOpenAIResponses,
 		BodyFormat: provcore.FormatOpenAIResponses,
 		Body:       []byte(`{"model":"` + model + `","input":"hi","temperature":0.7,"top_p":0.9}`),
@@ -98,6 +99,7 @@ func TestPrepareBody_ReasoningQuirk_ChatAndResponsesAgree(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PrepareBody(responses): %v", err)
 	}
+	respBody, respRW := respPrep.Body, respPrep.Rewrites
 
 	for _, w := range []struct {
 		wire string
@@ -137,7 +139,7 @@ func TestPrepareBody_ReasoningQuirk_ChatAndResponsesAgree(t *testing.T) {
 // on every /v1/responses call would silently change output for gpt-4o callers.
 func TestPrepareBody_Responses_NonReasoningModel_KeepsSamplingParams(t *testing.T) {
 	ad := testAdapter(t)
-	body, rw, _, err := ad.PrepareBody(provdispatch.Request{
+	bodyPrep, err := ad.PrepareBody(provdispatch.Request{
 		WireShape:  typology.WireShapeOpenAIResponses,
 		BodyFormat: provcore.FormatOpenAIResponses,
 		Body:       []byte(`{"model":"gpt-4o","input":"hi","temperature":0.7}`),
@@ -146,6 +148,7 @@ func TestPrepareBody_Responses_NonReasoningModel_KeepsSamplingParams(t *testing.
 	if err != nil {
 		t.Fatalf("PrepareBody: %v", err)
 	}
+	body, rw := bodyPrep.Body, bodyPrep.Rewrites
 	if !strings.Contains(string(body), `"temperature":0.7`) {
 		t.Errorf("non-reasoning model must keep the caller's temperature; got %s", body)
 	}
@@ -164,7 +167,7 @@ func TestPrepareBody_Responses_NonReasoningModel_KeepsSamplingParams(t *testing.
 func TestPrepareBody_Responses_StreamingKeepsTheStrip(t *testing.T) {
 	for _, stream := range []bool{false, true} {
 		ad := testAdapter(t)
-		body, rw, _, err := ad.PrepareBody(provdispatch.Request{
+		bodyPrep, err := ad.PrepareBody(provdispatch.Request{
 			WireShape:  typology.WireShapeOpenAIResponses,
 			BodyFormat: provcore.FormatOpenAIResponses,
 			Stream:     stream,
@@ -174,6 +177,7 @@ func TestPrepareBody_Responses_StreamingKeepsTheStrip(t *testing.T) {
 		if err != nil {
 			t.Fatalf("PrepareBody(stream=%v): %v", stream, err)
 		}
+		body, rw := bodyPrep.Body, bodyPrep.Rewrites
 		if strings.Contains(string(body), `"temperature"`) {
 			t.Errorf("stream=%v: temperature must be stripped; got %s", stream, body)
 		}
@@ -191,7 +195,7 @@ func TestPrepareBody_Responses_StreamingKeepsTheStrip(t *testing.T) {
 // coverage.
 func TestPrepareBody_Responses_StampsResolvedModel(t *testing.T) {
 	ad := testAdapter(t)
-	body, _, _, err := ad.PrepareBody(provdispatch.Request{
+	bodyPrep, err := ad.PrepareBody(provdispatch.Request{
 		WireShape:  typology.WireShapeOpenAIResponses,
 		BodyFormat: provcore.FormatOpenAIResponses,
 		Body:       []byte(`{"model":"my-catalog-alias","input":"hi"}`),
@@ -200,6 +204,7 @@ func TestPrepareBody_Responses_StampsResolvedModel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PrepareBody: %v", err)
 	}
+	body := bodyPrep.Body
 	if !strings.Contains(string(body), `"model":"gpt-4o"`) {
 		t.Errorf("responses body must carry the resolved ProviderModelID; got %s", body)
 	}

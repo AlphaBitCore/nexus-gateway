@@ -43,9 +43,9 @@ func TestRegisterAllStrategies_withSmartDeps_registersSmartStrategy(t *testing.T
 	// targets — but never "unknown strategy type", which would mean it was not
 	// registered at all.
 	//
-	// The check used to look for ErrMaxDepth, which an unregistered type never
-	// produced; it asserted the wrong thing and passed for the wrong reason.
-	// The comment beside it always said what was meant.
+	// Checking for ErrMaxDepth asserts the wrong thing and passes for the wrong
+	// reason: an unregistered type never produces it.
+	// The comment beside it says what is meant.
 	if err != nil && strings.Contains(err.Error(), "unknown strategy type") {
 		t.Errorf("smart strategy is not registered: %v", err)
 	}
@@ -105,11 +105,11 @@ func TestConditionalStrategy_noBranchNoDefault_returnsNilTargets(t *testing.T) {
 // the chain's entries reaches the caller rather than being folded into a
 // shorter chain.
 //
-// Same property the recursion-error test asserted, on the mechanism that
-// replaced it. A chain entry used to point at a nested strategy and now names a
-// leaf, but either way an unresolvable entry means the chain the admin wrote is
-// not the chain being flown — and silently flying a shorter one is how a
-// fallback stops being one without anybody noticing.
+// Same property the recursion-error test asserts, on the current
+// mechanism. A chain entry names a
+// leaf rather than a nested strategy, but either way an unresolvable entry means
+// the chain the admin wrote is not the chain being flown — and silently flying a
+// shorter one is how a fallback stops being one without anybody noticing.
 func TestFallbackStrategy_leafLookupError_propagates(t *testing.T) {
 	errLookup := errors.New("catalog unavailable")
 	s := &FallbackStrategy{lookup: func(_ context.Context, _, _ string) (*core.RoutingTarget, error) {
@@ -138,9 +138,9 @@ func TestFallbackStrategy_leafLookupError_propagates(t *testing.T) {
 // target cannot be resolved, the error reaches the caller rather than being
 // swallowed into "no targets".
 //
-// The property is the same one the recursion-error test asserted; only the
-// mechanism moved. A weighted entry used to point at a nested strategy the
-// registry evaluated, and now it names a leaf this strategy resolves directly —
+// The property is the same one the recursion-error test asserts, on the current
+// mechanism: a weighted entry names a leaf this strategy resolves directly rather
+// than a nested strategy the registry evaluates —
 // but either way, an error there means the rule cannot be served, and reporting
 // it as an empty result would make a broken lookup indistinguishable from a
 // deliberately empty rule.

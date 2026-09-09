@@ -203,9 +203,13 @@ func (m *Manager) asyncCreate(providerID, modelID, systemJSON, toolsJSON, toolCo
 	// One goroutine and one upstream create per in-flight cache key, not per
 	// request. DoChan starts the work in its own goroutine and hands every
 	// duplicate caller the same buffered result channel, so discarding the
-	// channel here cannot block or strand the worker. The key is removed as
-	// soon as the create finishes, by which point Redis already holds the
-	// record and the next request hits instead of creating.
+	// channel here cannot block or strand the worker.
+	//
+	// The key leaves the group when the function below RETURNS, and runCreate
+	// writes Redis before returning, so the record exists for a moment while the
+	// key is still held. A request arriving then hits Redis and never reaches
+	// here; only a caller that DELETES the record inside that window collapses
+	// onto a create that is already finishing.
 	m.createGroup.DoChan(redisKey, func() (any, error) {
 		m.runCreate(providerID, modelID, systemJSON, toolsJSON, toolConfigJSON, redisKey, cfg)
 		return nil, nil

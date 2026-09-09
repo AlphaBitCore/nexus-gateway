@@ -2,19 +2,20 @@ package providers
 
 import (
 	"context"
-	"github.com/goccy/go-json"
 	"io"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/goccy/go-json"
+
 	"github.com/labstack/echo/v4"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/ai/providers/credstore"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/peer"
+	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/httpclient"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/keyderive"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/iam"
-	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
 )
 
 // RegisterProviderTestRoutes registers provider connectivity test + health routes.

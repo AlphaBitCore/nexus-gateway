@@ -105,3 +105,7 @@ require (
 replace github.com/AlphaBitCore/nexus-gateway/packages/shared => ../shared
 
 replace github.com/AlphaBitCore/nexus-gateway/packages/nexus-agent-core => ../nexus-agent-core
+
+require github.com/AlphaBitCore/nexus-gateway/packages/httpclient v0.0.0
+
+replace github.com/AlphaBitCore/nexus-gateway/packages/httpclient => ../httpclient

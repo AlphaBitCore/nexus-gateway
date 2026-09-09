@@ -19,6 +19,8 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/policy/quota"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/policy/requestcontext"
 	routingcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/core"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/diag"
+	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/telemetry"
 	hookcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
 	normcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
@@ -58,8 +60,13 @@ type proxyState struct {
 
 	phaseSink  *traffic.PhaseSink
 	phaseTimer *traffic.PhaseTimer
-	logger     *slog.Logger
-	rec        *audit.Record
+	// scopedLogger memoizes the request-scoped logger. Nil until log() is
+	// first called: building it costs 463.8ns/704B/11 allocs against a JSON
+	// handler, and a 2xx request logs nothing (access logs were demoted to
+	// Debug), so the overwhelming majority of requests must not pay it.
+	// Read through log(), never directly.
+	scopedLogger *slog.Logger
+	rec          *audit.Record
 
 	// Admission outputs.
 	vkMeta   *vkauth.VKMeta
@@ -102,6 +109,11 @@ type proxyState struct {
 	cacheKey               string
 	gatewayCacheStatus     audit.GatewayCacheStatus
 	gatewayCacheSkipReason audit.GatewayCacheSkipReason
+	// cachePreparedCacheMarked records that the codec turned on the
+	// provider's prompt cache while preparing this body. Stamped onto the
+	// audit row so cache_marker_injected reports what was SENT rather than
+	// what was configured.
+	cachePreparedCacheMarked bool
 	// cachePreparedBody is the PrepareBody output, reused on MISS to
 	// skip a duplicate encode in the executor; cachePreparedRewrites is
 	// the matching rewrites slice (goes into Response.Coerced);
@@ -121,16 +133,64 @@ type proxyState struct {
 // newProxyState performs the pre-pipeline setup: stamp the request
 // context with the ingress, phase sink and timer, build the
 // request-scoped logger, and open the audit record.
+// log returns the request-scoped logger, building it on first use.
+//
+// Every attribute it carries is already on the state, so memoizing costs no
+// extra field: the request id is the cross-service correlation value, endpoint
+// is the audit endpoint kind, and ingressFormat comes from the per-request
+// resolved Ingress.
+//
+// Deliberately lazy. slog.Logger.With allocates unconditionally — it boxes
+// each argument, clones the Logger and clones the handler — and it does so
+// whether or not anything is ever logged through the result. Access logs for
+// 2xx/3xx are Debug, so a healthy request emits nothing and would have paid
+// 463.8ns/704B/11 allocs for a logger it never used. The sibling call site in
+// proxy_routing.go builds its logger inside the branch that logs, which is the
+// shape this now matches.
+//
+// Not safe for concurrent first use, and does not need to be: the stage chain
+// is sequential, and the streaming legs that outlive it capture the result of
+// an earlier call rather than racing to build one.
+func (s *proxyState) log() *slog.Logger {
+	if s.scopedLogger == nil {
+		s.scopedLogger = s.h.deps.Logger.With(
+			"requestId", s.requestID,
+			diag.ExternalRequestIDAttrKey, s.requestID,
+			"endpoint", s.endpointType,
+			"ingressFormat", string(s.resolved.BodyFormat),
+		)
+	}
+	return s.scopedLogger
+}
+
+// debugEnabled reports whether anything would come of a Debug line, asked of
+// the BASE logger so the question itself does not build the scoped one.
+//
+// It exists because slog's level check happens too late to save the cost:
+// Logger.Debug(msg, args...) builds the variadic []any and boxes every
+// argument AT THE CALL SITE, then discards them inside. On a path every
+// successful request walks, that is a permanent tax for output nobody reads —
+// 2xx access logging is Debug by deliberate choice
+// (perf(gateway): demote 2xx/3xx access logs to Debug).
+func (s *proxyState) debugEnabled() bool {
+	return s.h.deps.Logger.Enabled(s.r.Context(), slog.LevelDebug)
+}
+
 func (h *Handler) newProxyState(in Ingress, w http.ResponseWriter, r *http.Request) *proxyState {
 	// All persisted timestamps are UTC instants — see docs/developers/workflow/timezone.md.
 	// Latency math is also fine off UTC since time.Time carries a
 	// monotonic clock reading independent of location.
 	start := time.Now().UTC()
-	requestID := r.Header.Get("X-Nexus-Request-Id")
-	clientRequestID := r.Header.Get("x-request-id")
-	// X-Nexus-Request-Id is the single canonical correlation header;
-	// it carries both the request id and the cross-service trace id.
-	traceID := requestID
+	requestID := traffic.ResolveRequestID(r.Header)
+	clientRequestID := r.Header.Get(traffic.HeaderRequestIDAlias)
+	// The request id under either accepted spelling. It is the cross-service
+	// correlation key; the caller's own W3C trace is a separate value read from
+	// traceparent below.
+	// The caller's W3C trace id, present only when they sent a parseable
+	// traceparent (telemetry.HTTPTrace captures it between Extract and Start).
+	// Empty means the caller runs no tracing we can join to — the column stays
+	// NULL rather than receiving the id our own tracer derived from requestID.
+	traceID := telemetry.InboundTraceID(r.Context())
 
 	// Ingress detection is path-authoritative: the route table's descriptor
 	// is the whole answer. resolved starts as a copy of it and only the
@@ -163,19 +223,6 @@ func (h *Handler) newProxyState(in Ingress, w http.ResponseWriter, r *http.Reque
 	// finalize defer.
 	phaseTimer := traffic.NewPhaseTimer()
 	r = r.WithContext(ctx)
-
-	// Stamp the canonical correlation key onto the request-scoped logger.
-	// Every downstream slog line through this scope picks it up; the
-	// shared SlogSink auto-lifts the same key into DiagEvent.TraceID so
-	// the resulting thing_diag_event rows carry the trace in their
-	// typed column without per-callsite stamping. Key is the one
-	// defined in shared/core/diag (TraceIDAttrKey = "trace_id").
-	logger := h.deps.Logger.With(
-		"requestId", requestID,
-		"trace_id", traceID,
-		"endpoint", endpointType,
-		"ingressFormat", string(resolved.BodyFormat),
-	)
 
 	rec := &audit.Record{
 		RequestID:       requestID,
@@ -219,7 +266,6 @@ func (h *Handler) newProxyState(in Ingress, w http.ResponseWriter, r *http.Reque
 		endpointType: endpointType,
 		phaseSink:    phaseSink,
 		phaseTimer:   phaseTimer,
-		logger:       logger,
 		rec:          rec,
 	}
 }

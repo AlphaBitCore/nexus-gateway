@@ -13,8 +13,8 @@ import (
 // clean-set: a credential that has never failed gets confirmed-clean on its first
 // success and thereafter its success path touches NO circuit Redis (no HGet, no
 // HSet auth_fails=0). Observable: the circuit hash is never CREATED for a
-// never-failed credential (the legacy path used to HSet auth_fails=0, creating
-// an empty hash on every success).
+// never-failed credential — an unconditional HSet auth_fails=0 would create an
+// empty hash on every success.
 func TestBuffer_CircuitCleanSet_NeverFailedSkipsRedis(t *testing.T) {
 	mini, err := miniredis.Run()
 	if err != nil {

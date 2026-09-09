@@ -51,9 +51,10 @@ func TestRunRequestHooks_ModifyOrder_HookRewritePrecedesCodecEncode(t *testing.T
 	}
 
 	h := &Handler{deps: &Deps{
-		HookConfigCache: cache,
-		TrafficAdapter:  stub,
-		Logger:          slog.Default(),
+		NormalizeRegistry: canonicalRegistry(),
+		HookConfigCache:   cache,
+		TrafficAdapter:    stub,
+		Logger:            slog.Default(),
 	}}
 
 	body := []byte(`{"messages":[{"role":"user","content":"ping alice@example.com"}]}`)

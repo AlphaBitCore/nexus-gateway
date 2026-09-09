@@ -137,11 +137,8 @@ upstream:
   dialTimeout: "10s"
 
 limits:
-  # Maximum request body size
-  requestBodyLimit: "10MB"
-  # Maximum response body size (non-SSE)
-  responseBodyLimit: "10MB"
-  # Maximum SSE buffer size
+  # Maximum bytes held while buffering an SSE response for inspection.
+  # Omit to use the streaming package default (8MB).
   sseBufferLimit: "8MB"
 
 log:
@@ -249,8 +246,8 @@ audit:
 #
 # Stated explicitly, and disabled, on purpose. This template previously carried NO
 # spill block at all, so the shipping posture of a compliance product was readable
-# only by inferring a Go default from source — the same silence finding S-3 exists
-# to remove, one layer up. `enabled: false` means every captured body stays inline
+# only by inferring a Go default from source — the same silence a runtime-source
+# report exists to remove, one layer up. `enabled: false` means every captured body stays inline
 # on traffic_event_payload, bounded by payloadCapture.maxInlineBodyBytes.
 #
 # The SHIPPING posture for a real deployment is `compliance-proxy.prod.yaml.example`, which

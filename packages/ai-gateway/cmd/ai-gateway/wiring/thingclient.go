@@ -16,6 +16,7 @@ import (
 
 	geminicache "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/cache/gemini"
 	cachelayer "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/cache/layer"
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/cache/promptcache"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/config"
 	creddecrypt "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/credentials/decrypt"
 	credmanager "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/credentials/manager"
@@ -27,6 +28,7 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/policy/quota"
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
 	provtarget "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/target"
+	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/httpclient"
 	shareddiag "github.com/AlphaBitCore/nexus-gateway/packages/shared/core/diag"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/diag/runtimeintrospect"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/core/metrics/platform"
@@ -35,7 +37,6 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/rstokenauth"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/payloadcapture"
 	cfgloader "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/configloader"
-	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/mq"
 	streampolicy "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/streaming/policy"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/thingclient"
@@ -102,6 +103,7 @@ type TCInitDeps struct {
 	PolicyCache       *quota.PolicyCache
 	AiguardGetter     func() *aiguard.ConfigCache
 	NormEngine        *wirerewrite.Engine
+	PromptCache       *promptcache.Settings
 	PassthroughCache  *passthrough.Cache
 	AuditWriter       *audit.Writer
 	ConfigKeyRecorder *runtimeintrospect.KeyStateRecorder
@@ -356,7 +358,7 @@ func MountRoutes(
 		PayloadCapture:  d.PayloadCapture,
 		StreamingPolicy: d.StreamingPolicy,
 		FormatBridge:    d.FormatBridge, Allowlist: d.Allowlist,
-		NormEngine: d.NormEngine, GeminiCacheMgrSet: d.GeminiMgrSet,
+		NormEngine: d.NormEngine, PromptCache: d.PromptCache, GeminiCacheMgrSet: d.GeminiMgrSet,
 		PassthroughCache: d.PassthroughCache, Logger: logger,
 		Semantic: d.Semantic,
 	})

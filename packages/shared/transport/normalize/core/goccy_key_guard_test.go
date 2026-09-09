@@ -6,8 +6,8 @@ import (
 )
 
 // The guard's condition is DERIVED from goccy's key decoder, so these pin the derivation's
-// two non-obvious consequences rather than a list of sampled crashers — sampling is what
-// produced C-31a's insufficient guard, which fuzz later bypassed.
+// two non-obvious consequences rather than a list of sampled crashers — sampling produces
+// a trailing-backslash-only guard, which fuzz bypasses.
 
 func TestMayOverrunGoccyKeyDecoder_Condition(t *testing.T) {
 	bs := `\`
@@ -21,8 +21,8 @@ func TestMayOverrunGoccyKeyDecoder_Condition(t *testing.T) {
 			"the backslash's escapee IS goccy's terminator"},
 		{"invalid-escapee-last", `{"mo` + bs + `x`, true,
 			"escapee is the final payload byte, so the cursor steps past the terminator"},
-		{"c31a-fuzz-finding", `{"` + bs + `00` + bs + `.`, true,
-			"the input that bypassed C-31a's trailing-backslash-only guard"},
+		{"fuzz-found-double-escape", `{"` + bs + `00` + bs + `.`, true,
+			"the input that bypasses a trailing-backslash-only guard"},
 		{"VALID-escapee-last", `{"a` + bs + `n`, true,
 			"a RECOGNIZED escape over-advances identically — gating on invalid escapes only " +
 				"would miss this, which is the derivation's first non-obvious consequence"},

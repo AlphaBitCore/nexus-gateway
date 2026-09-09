@@ -1,16 +1,16 @@
 // Package costing holds the gateway's single token-to-USD pricing formula and
 // the single interpretation of a NULL price column.
 //
-// It exists because the four-tier cost computation was previously written out
-// by hand at each call site. The customer request path had the correct version
+// It exists because the four-tier cost computation is otherwise written out
+// by hand at each call site. The customer request path has the correct version
 // (input / cached-read / cached-write / output billed at their own rates); the
 // two internal-operations callers — the smart router's LLM decider and the AI
-// Guard classifier backend — had a two-tier version that billed the whole
+// Guard classifier backend — otherwise carry a two-tier version billing the whole
 // prompt-token count at the full input rate. On OpenAI and Gemini
 // prompt_tokens INCLUDES the cached subset, and cached tokens bill at 0.25-0.5x,
-// so those callers systematically over-estimated internal spend in proportion
+// so such callers systematically over-estimate internal spend in proportion
 // to their own cache hit rate — which for a near-identical router prompt is
-// very high. Copying the formula a third time would have reproduced the same
+// very high. Copying the formula a third time reproduces the same
 // class of drift, so both the formula and the NULL-fallback rule live here and
 // nowhere else.
 //
@@ -61,8 +61,8 @@ type Tokens struct {
 // vendor charges no discount and no surcharge for cached tokens, so it falls
 // back to the input price, making the cache decomposition a no-op that sums
 // back to the flat input rate. Keeping this rule in one function is the point
-// of the package: the internal-ops callers used to have no cache-price concept
-// at all, and giving them a second, subtly different fallback would have made
+// of the package: an internal-ops caller with no cache-price concept of its
+// own, given a second and subtly different fallback, would make
 // two pricing regimes for the same model.
 func RatesFromModel(input, output, cachedRead, cachedWrite *float64) (Rates, bool) {
 	if input == nil {
@@ -91,8 +91,8 @@ func (r Rates) Priced() bool {
 // Prompt is the total (see Tokens). Without the subtraction, cached tokens
 // would be charged at the full input price AND again at their cache rate.
 // The remainder is floored at zero so a provider that reports cache counts
-// exceeding its own prompt count produces no negative charge — historically
-// the source of negative cost values when two price sources disagreed.
+// exceeding its own prompt count produces no negative charge, which is where
+// negative cost values come from when two price sources disagree.
 func (r Rates) EstimateUSD(t Tokens) float64 {
 	const million = 1_000_000.0
 	uncachedInput := t.Prompt - t.CacheRead - t.CacheCreation

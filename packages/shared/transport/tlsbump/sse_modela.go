@@ -112,10 +112,16 @@ func runSSEModelA(
 	defer sub.parser.Release()
 
 	maxPattern := deriveModelAMaxPattern(probe)
-	// Config-time operator signal (#16): tlsbump leaves TailWindowBytes at the engine
-	// default, so compare the derived bound against that default. Off the per-byte path.
-	modela.WarnStreamingCoverageGap(logger, maxPattern, modela.DefaultTailWindowBytes)
-	if err := modela.Run(ctx, sub, modela.Config{MaxBufferBytes: maxBuf, MaxPatternBytes: maxPattern}); err != nil {
+	tailWindow := tlsBumpTailWindow(maxPattern)
+	// Config-time operator signal, off the per-byte path: warn on the window this
+	// substrate will actually run with, not on a constant it no longer uses. Scoped
+	// to the rule-set generation the bound came from, so a gap that an admin closes
+	// and later reopens is reported again instead of being silenced for the life of
+	// the process.
+	modela.WarnStreamingCoverageGap(logger, probe.RuleSetGeneration(), maxPattern, tailWindow)
+	if err := modela.Run(ctx, sub, modela.Config{
+		TailWindowBytes: tailWindow, MaxBufferBytes: maxBuf, MaxPatternBytes: maxPattern,
+	}); err != nil {
 		target := ""
 		if respInput != nil {
 			target = respInput.TargetHost
@@ -457,3 +463,14 @@ func (s *sseWireSubstrate) writeErrorAndDone() error {
 	}
 	return s.writeFrame(&streaming.SSEEvent{Event: "message", Data: "[DONE]", Done: true, Retry: -1})
 }
+
+// tlsBumpTailWindow sizes the Model-A trailing window from the rule set, the
+// same way the gateway substrate does.
+//
+// The window is not an operator knob: the engine states its guarantee as
+// window > maxPattern + prescanBatch, so a constant is only ever accidentally
+// large enough. It stopped being large enough for the shipped rule pack — 7362
+// bytes of contiguous pattern needs more than 8386, and the package default is
+// 8192 — which left this substrate, the one in the host's outbound path,
+// running outside the guarantee it advertises while the gateway ran inside it.
+func tlsBumpTailWindow(maxPattern int) int { return modela.TailWindowFor(maxPattern) }

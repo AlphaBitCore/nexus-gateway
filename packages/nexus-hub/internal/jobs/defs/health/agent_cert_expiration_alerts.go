@@ -11,14 +11,14 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/alerts/engine"
+	alerting "github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/alerts/engine"
 	defs "github.com/AlphaBitCore/nexus-gateway/packages/nexus-hub/internal/jobs/defs"
 )
 
 const (
 	agentCertExpiryJobID          = "agent-cert-expiration-alerts"
 	agentCertExpiryJobName        = "Agent Cert Expiration Alerts"
-	agentCertExpiryJobDescription = "Polls thing_agent.cert_expires_at for desktop-agent Things and raises agent.cert_expiration_imminent alerts as the expiry approaches each warn-day threshold (default 30 / 14 / 7 / 1 days). Auto-resolves when the cert is renewed."
+	agentCertExpiryJobDescription = "Polls thing_agent.cert_expires_at for desktop-agent nodes and raises agent.cert_expiration_imminent alerts as the expiry approaches each warn-day threshold (default 30 / 14 / 7 / 1 days). Auto-resolves when the cert is renewed."
 
 	agentCertExpiryRuleID = "agent.cert_expiration_imminent"
 	agentCertTargetPrefix = "thing:"

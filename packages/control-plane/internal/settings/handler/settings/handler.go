@@ -1,8 +1,6 @@
 // Package settings owns the Control Plane admin API for platform-wide
 // gateway settings, agent (device-defaults) settings, and the
-// device-auth mode toggle. First R6 domain extracted from the flat
-// handler/ package; canonical pattern recorded in
-// docs/_archive/2026-q2/programs/r6-handler-decomp-runbook.md.
+// device-auth mode toggle.
 package settings
 
 import (
@@ -18,6 +16,7 @@ import (
 
 	authserver_store "github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/identity/authserver/store"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/audit"
+	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/middleware"
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/store/systemmetastore"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/iam"
 )
@@ -161,4 +160,37 @@ func (h *Handler) incrementConfigVersion(ctx context.Context) {
 // Wraps errJSON so each handler doesn't repeat the same boilerplate.
 func internalServerError(c echo.Context, msg string) error {
 	return c.JSON(http.StatusInternalServerError, errJSON(msg, "server_error", ""))
+}
+
+// requireAdminActor returns the authenticated principal's key id for the
+// `updatedBy` column, or ("", false) when there is none.
+//
+// A mutating handler in this domain writing updatedBy = "" (siem:
+// "unknown") when AdminAuthFromContext returns nil produces a settings row
+// that records NOBODY made the change, or a fabricated actor string. In
+// production that branch is unreachable — the whole admin group is behind
+// AdminAuth — which is exactly why it goes unnoticed, and exactly why it
+// is dangerous: eighteen settings tests and eight siem tests drove these
+// handlers with NO principal attached (anonCtx's own docstring said its
+// purpose was to make the updatedBy branch fall through), so a whole file of
+// business-logic tests was exercising an arm production never takes.
+//
+// Returning a boolean rather than a written response is deliberate: a helper
+// that WRITES the refusal and returns an error gives every call site a dead
+// `if err != nil` branch, because c.JSON returns nil on success. That is the
+// shape the SCIM group guard shipped with.
+func requireAdminActor(c echo.Context) (string, bool) {
+	aa := middleware.AdminAuthFromContext(c)
+	if aa == nil || aa.KeyID == "" {
+		return "", false
+	}
+	return aa.KeyID, true
+}
+
+// unauthenticated is the canonical 401 for a mutating handler reached with no
+// principal. Returned directly by the caller, so there is no branch to get
+// wrong.
+func unauthenticated(c echo.Context) error {
+	return c.JSON(http.StatusUnauthorized,
+		errJSON("Authentication required", "unauthorized", "UNAUTHENTICATED"))
 }

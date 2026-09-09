@@ -61,11 +61,10 @@ func StorageRawBody(captured, redacted []byte, a decision.Action) []byte {
 //
 // An empty action carries no redaction demand — nothing asked for the content
 // to be withheld — so it stores the captured bytes. The rule is stated once,
-// in the one function all three services route through, because the previous
-// arrangement is what this program's S-14 is about: the gateway had learned the
-// trap and guarded it at each of its own call sites while the shared emitter
-// that the proxy and the agent depend on never got the same guard. The
-// knowledge lived in one copy, and the copy that had it was not the shared one.
+// in the one function all three services route through. Guarding it at each of the
+// gateway's own call sites instead leaves the shared emitter the proxy and the agent
+// depend on without the guard: the knowledge lives in one copy, and the copy that
+// has it is not the shared one.
 //
 // ok=false is reserved for a non-empty action that is none of the three. That
 // is a producer bug rather than a policy, and it still stores nothing (a body

@@ -3,9 +3,10 @@ package wiring
 import (
 	"context"
 	"errors"
-	"github.com/goccy/go-json"
 	"testing"
 	"time"
+
+	"github.com/goccy/go-json"
 
 	"github.com/prometheus/client_golang/prometheus"
 
@@ -81,13 +82,14 @@ func (p *capturingProducer) Enqueue(_ context.Context, _ string, data []byte) er
 }
 func (p *capturingProducer) Close() error { return nil }
 
-// TestWriterBackedTrafficSink_StampsTraceIDAndCost asserts the producer-side
-// of the ai-guard correlation fix: the emitted TrafficEvent's TraceID lands on
+// TestWriterBackedTrafficSink_StampsCorrelationIDsAndCost asserts the
+// producer-side of the ai-guard correlation contract: the emitted event's
+// RequestID lands on external_request_id and its CallerTraceID lands on
 // the published traffic_event row's trace_id (so the ai-guard cost row is
 // joinable to the triggering user request), the ai-guard cost lands on the
 // same row, and internal_purpose='ai-guard' is preserved (so the row is still
 // excluded from billable totals on the read side).
-func TestWriterBackedTrafficSink_StampsTraceIDAndCost(t *testing.T) {
+func TestWriterBackedTrafficSink_StampsCorrelationIDsAndCost(t *testing.T) {
 	prod := &capturingProducer{}
 	opsReg := registry.NewRegistry(prometheus.NewRegistry())
 	w := audit.NewWriter(prod, "test.queue", opsReg, discardLogger())
@@ -99,7 +101,7 @@ func TestWriterBackedTrafficSink_StampsTraceIDAndCost(t *testing.T) {
 		BackendMode:     "configured_provider",
 		InternalPurpose: "ai-guard",
 		CostUsd:         0.0042,
-		TraceID:         "parent-req-xyz",
+		RequestID:       "parent-req-xyz",
 	})
 	w.Close() // synchronous drain → prod.payloads populated
 
@@ -110,8 +112,15 @@ func TestWriterBackedTrafficSink_StampsTraceIDAndCost(t *testing.T) {
 	if err := json.Unmarshal(prod.payloads[0], &msg); err != nil {
 		t.Fatalf("unmarshal published message: %v", err)
 	}
-	if msg.TraceID != "parent-req-xyz" {
-		t.Errorf("trace_id = %q, want parent-req-xyz (ai-guard row must be joinable to parent)", msg.TraceID)
+	if msg.ExternalRequestID != "parent-req-xyz" {
+		t.Errorf("external_request_id = %q, want parent-req-xyz (the ai-guard row must be joinable to the request that invoked it)", msg.ExternalRequestID)
+	}
+	// The triggering request carried no traceparent, so there is no caller trace
+	// to record. Filing the request id here instead — which is what this path
+	// used to do — makes every ai-guard row look like it belonged to a customer
+	// trace, and downstream nothing can tell the difference.
+	if msg.TraceID != "" {
+		t.Errorf("trace_id = %q, want empty: only an inbound traceparent may fill it", msg.TraceID)
 	}
 	if msg.InternalPurpose == nil || *msg.InternalPurpose != "ai-guard" {
 		t.Errorf("internal_purpose = %v, want ai-guard (must stay excluded from billable)", msg.InternalPurpose)
@@ -435,8 +444,8 @@ func TestLiveClassifier_buildBackend_externalURL_noProviderCredential(t *testing
 // behind the classifier's charge. The judge template is fixed, so most of the
 // prompt is served from the provider's cache and bills at a fraction of the
 // input rate; without the split on the row, a correct cache-discounted charge
-// and the full-rate over-charge this row used to carry are indistinguishable
-// after the fact — which is exactly why the historical over-estimate cannot be
+// and a full-rate over-charge are indistinguishable
+// after the fact — which is why an over-estimate cannot be
 // recomputed.
 func TestWriterBackedTrafficSink_Emit_PersistsCacheTokenSplit(t *testing.T) {
 	prod := &capturingProducer{}

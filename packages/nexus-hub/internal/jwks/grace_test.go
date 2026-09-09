@@ -112,8 +112,8 @@ func TestHandleFetchFailure_ClearsCacheAfterGrace(t *testing.T) {
 // carrying an empty "keys" array must be treated as a soft fetch failure —
 // the previously-installed key must survive (stale-grace), NOT be wiped, and
 // fetchedAt must NOT advance (otherwise the grace window would reset on every
-// empty fetch and the cache could never expire). Before the fix the swap was
-// unconditional, so one empty 200 emptied the cache and every enrollment 503'd.
+// empty fetch and the cache could never expire). An unconditional swap
+// empties the cache on one empty 200 and 503s every enrollment.
 func TestRefresh_ZeroKey200RetainsStaleCache(t *testing.T) {
 	var serveValid atomic.Bool
 	serveValid.Store(true)

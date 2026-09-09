@@ -120,6 +120,7 @@ paths:
                                         - together
                                         - fireworks
                                         - moonshot
+                                        - voyage
                                 apiVersion:
                                     type: string
                                     description: Optional adapter-specific API version.
@@ -315,6 +316,7 @@ paths:
                                         - together
                                         - fireworks
                                         - moonshot
+                                        - voyage
                                 region:
                                     type:
                                         - string
@@ -821,6 +823,7 @@ paths:
                                         - together
                                         - fireworks
                                         - moonshot
+                                        - voyage
                                 baseUrl:
                                     type: string
                                     description: Upstream provider base URL.
@@ -903,6 +906,7 @@ paths:
                                         - together
                                         - fireworks
                                         - moonshot
+                                        - voyage
                                 baseUrl:
                                     type: string
                                     description: Upstream provider base URL.

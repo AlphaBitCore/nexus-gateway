@@ -10,7 +10,7 @@ import (
 )
 
 // adapterWireCodec reuses one scratch buffer for the string-to-bytes conversion
-// ExtractStreamChunk needs (finding C-20). The Model-A substrate RETAINS each frame's
+// ExtractStreamChunk needs. The Model-A substrate RETAINS each frame's
 // extracted text in its wireUnit and reads it later, so a reused buffer that leaked into
 // the returned text would corrupt an earlier frame's text once a later frame overwrote it —
 // wrong bytes spliced into a redacted stream on the enforcement path, with no error raised.

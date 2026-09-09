@@ -10,7 +10,11 @@ server:
   port: 3060
 
 database:
-  url: "postgres://postgres:postgres@localhost:55532/nexus_gateway?sslmode=disable"
+  # Empty on purpose: a connection URL carries its credential in the userinfo
+  # segment, so this line is a SECRET even though the key is called `url`.
+  # The value comes from the DATABASE_URL env override (see .env.example);
+  # binding rule: CLAUDE.md "Secrets are env-only — never yaml".
+  url: ""
   maxConns: 20
   minConns: 5
 

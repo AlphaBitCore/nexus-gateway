@@ -43,8 +43,7 @@ type Queue struct {
 // tests can exercise the post-export mid-swap error arms in
 // migrateToEncrypted (install-rename failure with restore, attach/export/detach
 // failure cleanup). Production never reassigns them. Mirrors the established
-// pattern in packages/agent/internal/identity/secretstore/fallback.go (osFile +
-// createTempFn + renameFn) and packages/agent/internal/identity/enrollment/enroll.go.
+// pattern in packages/agent/internal/identity/enrollment/enroll.go.
 var (
 	renameFn = os.Rename
 	removeFn = os.Remove
@@ -133,16 +132,16 @@ func NewQueue(dbPath string, encryptionKey []byte) (*Queue, error) {
 			hook_reason TEXT,
 			hook_reason_code TEXT,
 			compliance_tags TEXT,
-			-- #70: cross-service correlation id. Populated from
-			-- audit.AuditEvent.TraceID (X-Nexus-Request-Id header or
-			-- fallback txID per forward_handler). Without this column
-			-- agent.audit_events trace_id stayed empty and the wire
-			-- envelope shipped traceId='' → cp-ui Detail showed empty.
+			-- The intercepted client's own W3C trace id, from a traceparent
+			-- on the bumped request. Empty for the majority of traffic, and
+			-- for every passthrough flow, whose tunnel is never decrypted.
 			trace_id TEXT,
-			-- The CALLER's own request id (x-request-id), read off the
-			-- intercepted request by tlsbump. Adjacent to trace_id and
-			-- easily confused with it: that one is ours and groups a unit
-			-- of work, this one is theirs and is never rewritten.
+			-- The request id, read off the intercepted request by tlsbump or
+			-- minted there when the client sent neither spelling. This is the
+			-- cross-service correlation key — the rows every service writes for
+			-- one request share it. Adjacent to trace_id and easily confused
+			-- with it: that one belongs to the client's tracing system and is
+			-- usually absent; this one is always present.
 			external_request_id TEXT,
 			provider_name TEXT,
 			model_name TEXT,

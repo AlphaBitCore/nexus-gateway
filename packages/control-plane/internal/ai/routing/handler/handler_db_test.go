@@ -23,7 +23,7 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/peer"
 )
 
-// routingRuleCols mirrors store/routing_rule.go rrColumns. Kept local so the
+// routingRuleCols mirrors packages/control-plane/internal/ai/routing/routingstore/routing_rule.go rrColumns. Kept local so the
 // handler tests stay independent of the store-package test helper.
 // Column order: id, name, description, strategyType, config, matchConditions,
 // priority, pipelineStage, fallbackChain, retryPolicy,
@@ -486,9 +486,9 @@ func TestCreateRoutingRule_HappyPath(t *testing.T) {
 
 // Stage 0 is refused, not stored.
 //
-// This test used to assert the opposite — that an explicit 0 was accepted. That
-// pinned a policy-narrowing pipeline of our own invention which no UI control
-// ever offered, no production rule used, and the gateway no longer evaluates.
+// Asserting the opposite — that an explicit 0 is accepted —
+// pins a policy-narrowing pipeline of our own invention which no UI control
+// ever offered, no production rule used, and the gateway does not evaluate.
 // Accepting it would store a rule that renders in the admin UI and does nothing.
 //
 // Refused rather than coerced to 1: silently rewriting the caller's stage stores
@@ -1096,10 +1096,10 @@ func makeRRRowWithStrategy(id, name, strategyType string, now time.Time) []any {
 //
 // The upgrade migration disables rules carrying a strategy the gateway cannot
 // dispatch. The rules list has a one-click enable switch that sends
-// `{"enabled":true}` and nothing else — and validation used to run only when
-// the request SUPPLIED a strategyType, so that click sailed through: a green
+// `{"enabled":true}` and nothing else — and validation that runs only when
+// the request SUPPLIES a strategyType lets that click sail through: a green
 // "Rule updated" toast and a rule shown Enabled that the resolver yields on
-// every request forever. The migration's whole purpose, undone by a control
+// every request forever — the migration's whole purpose, undone by a control
 // that never mentions strategies.
 //
 // The rule is still fixable in the same call, which is the point of validating
@@ -1159,13 +1159,19 @@ func TestUpdateRoutingRule_APartialPatchCannotReviveAnUndispatchableRule(t *test
 
 // TestUpdateRoutingRule_TheSmartGuardReadsTheStoredStrategy.
 //
-// A smart rule may only match `requestedModelLiterals: ["auto"]`: unrestricted
-// conditions route non-auto traffic into the router and produce decisions
-// nothing grounded. Create enforces it.
+// A smart rule must pin `requestedModelLiterals` to keywords it explicitly
+// claims: unrestricted conditions route traffic nobody pointed at the router
+// into it and produce decisions nothing grounded. Create enforces it.
 //
-// Update used to enforce it only when the request ALSO supplied strategyType,
-// so an edit that changed matchConditions alone slipped past — and the rule
-// that came out is one the create path would have refused. An admin widening
+// The unsafe payload here is the everything-glob, which is what "unrestricted"
+// means now that the keywords themselves are the operator's to choose. A
+// concrete keyword would no longer be refused by create either, so an arm built
+// on one could not tell a guard that reads the stored strategy from one that
+// skipped the check entirely.
+//
+// An update enforcing it only when the request ALSO supplies strategyType lets
+// an edit that changes matchConditions alone slip past — and the rule
+// that comes out is one the create path would refuse. An admin widening
 // the conditions on an existing smart rule is exactly the request that takes
 // that route.
 func TestUpdateRoutingRule_TheSmartGuardReadsTheStoredStrategy(t *testing.T) {
@@ -1178,7 +1184,7 @@ func TestUpdateRoutingRule_TheSmartGuardReadsTheStoredStrategy(t *testing.T) {
 			WillReturnRows(pgxmock.NewRows(routingRuleCols).
 				AddRow(makeRRRowWithStrategy("rule-1", "n", "smart", now)...))
 
-		body := `{"matchConditions":{"requestedModelLiterals":["gpt-5"]}}`
+		body := `{"matchConditions":{"requestedModelLiterals":["*"]}}`
 		c, rec := makeJSONReq(t, http.MethodPatch, "/api/admin/routing-rules/rule-1", body)
 		c.SetParamNames("id")
 		c.SetParamValues("rule-1")
@@ -1208,7 +1214,7 @@ func TestUpdateRoutingRule_TheSmartGuardReadsTheStoredStrategy(t *testing.T) {
 				AddRow(makeRRRowWithStrategy("rule-1", "n", "single", now)...))
 
 		body := `{"strategyType":"single","config":{"type":"single","providerId":"p","modelId":"m"},` +
-			`"matchConditions":{"requestedModelLiterals":["gpt-5"]}}`
+			`"matchConditions":{"requestedModelLiterals":["*"]}}`
 		c, rec := makeJSONReq(t, http.MethodPatch, "/api/admin/routing-rules/rule-1", body)
 		c.SetParamNames("id")
 		c.SetParamValues("rule-1")

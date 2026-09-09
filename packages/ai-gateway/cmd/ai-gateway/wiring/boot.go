@@ -17,6 +17,7 @@ import (
 	cache "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/cache/core"
 	geminicache "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/cache/gemini"
 	cachelayer "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/cache/layer"
+	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/cache/promptcache"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/config"
 	credmanager "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/credentials/manager"
 	credstats "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/credentials/stats"
@@ -89,6 +90,7 @@ type BootDeps struct {
 	MetricsRecorder    *epMetrics.Recorder
 	ResponseCache      *cache.Cache
 	NormEngine         *wirerewrite.Engine
+	PromptCache        *promptcache.Settings
 	PassthroughCache   *passthrough.Cache
 	GeminiMgrSet       *geminicache.ManagerSet
 	Allowlist          *forwardheader.Resolved
@@ -191,8 +193,11 @@ func Boot(ctx context.Context, cfg *config.Config, logger *slog.Logger) (*BootDe
 	}
 	d.HookConfigCache = InitHookConfigCache(d.DB, d.GwHookRegistry, logger)
 	d.HealthTracker = store.NewHealthTracker()
-	d.PtResolver = NewResolver(d.CacheLayer, d.CredManager, d.Rdb)
-	_, _, d.RouterResolver, d.CapCache = InitRouter(ctx, d.CacheLayer, d.HealthTracker, d.PtResolver, d.AdapterReg, logger, d.Cfg.Routing.EnforceNamedModelModality)
+	// Constructed before the resolver that reads it. Empty until the `cache`
+	// shadow key arrives, which answers "markers off" — the safe default.
+	d.PromptCache = promptcache.New()
+	d.PtResolver = NewResolver(d.CacheLayer, d.CredManager, d.Rdb, d.PromptCache)
+	_, _, d.RouterResolver, d.CapCache = InitRouter(ctx, d.CacheLayer, d.HealthTracker, d.PtResolver, d.AdapterReg, logger, d.Cfg.Routing.EnforceNamedModelModality, d.Rdb)
 
 	// Seed the capability cache from the models already loaded by
 	// InitCacheLayer.Start above. Subsequent reloads are handled by the

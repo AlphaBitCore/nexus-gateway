@@ -23,15 +23,16 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"github.com/goccy/go-json"
 	"io"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
+	"github.com/goccy/go-json"
+
 	"github.com/AlphaBitCore/nexus-gateway/packages/control-plane/internal/platform/peer"
-	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
+	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/httpclient"
 	"github.com/labstack/echo/v4"
 )
 
@@ -240,17 +241,14 @@ const simulatorForwardTimeout = 120 * time.Second
 // propagates upstream, and an in-progress SSE stream is allowed to run for
 // as long as the gateway keeps sending bytes. The upper bound that prevents
 // a hung upstream from pinning the connection forever lives on the
-// transport's ResponseHeaderTimeout (= simulatorForwardTimeout). The
-// transport is wrapped via nexushttp.WrapTransport so outbound debug logging
-// and request-id propagation still apply on this path.
+// transport's ResponseHeaderTimeout (= simulatorForwardTimeout), which the
+// factory sets from Config. Outbound debug logging and request-id
+// propagation come with every client it builds.
 func newSimulatorForwardClient() *http.Client {
-	base := http.DefaultTransport.(*http.Transport).Clone()
-	base.ResponseHeaderTimeout = simulatorForwardTimeout
-	return &http.Client{
-		Timeout: 0,
-		Transport: nexushttp.WrapTransport(base, nexushttp.WrapOpts{
-			Caller:         "cp-admin-aiguard-simulator",
-			PropagateReqID: true,
-		}),
-	}
+	return nexushttp.New(nexushttp.Config{
+		NoTimeout:             true,
+		ResponseHeaderTimeout: simulatorForwardTimeout,
+		Caller:                "cp-admin-aiguard-simulator",
+		PropagateReqID:        true,
+	})
 }

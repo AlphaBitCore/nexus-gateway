@@ -59,10 +59,10 @@ func SuggestModelType(id string) string {
 	// provider serves on chat completions that happens to accept and emit
 	// audio parts, so it falls through to "chat" below.
 	//
-	// It used to return "audio", with a comment saying the admin could
-	// refine it on save. They did not, and the type is what the routing
-	// guard compares against the endpoint kind: every request to
-	// /v1/chat/completions for one of these models was rejected with
+	// Returning "audio" here, on the reasoning that an admin can
+	// refine it on save, does not survive contact: the type is what the routing
+	// guard compares against the endpoint kind, so every request to
+	// /v1/chat/completions for one of these models is rejected with
 	// MODEL_MODALITY_MISMATCH. `type` answers "which endpoint serves this
 	// model", and for these the answer is chat; which modalities it handles
 	// is what inputModalities/outputModalities are for.

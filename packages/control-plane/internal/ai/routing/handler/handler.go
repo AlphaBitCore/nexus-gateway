@@ -1,7 +1,5 @@
 // Package routing owns the Control Plane admin API for routing rule
-// CRUD + the routing-simulate proxy to ai-gateway. R6 seventh domain
-// extracted from the flat handler/ package; recipe documented in
-// docs/_archive/2026-q2/programs/r6-handler-decomp-runbook.md.
+// CRUD + the routing-simulate proxy to ai-gateway.
 package routing
 
 import (

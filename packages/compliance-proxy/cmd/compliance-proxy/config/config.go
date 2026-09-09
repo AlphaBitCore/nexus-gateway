@@ -284,9 +284,17 @@ type UpstreamConfig struct {
 
 // LimitsConfig sets body-size caps for requests and responses.
 type LimitsConfig struct {
-	RequestBodyLimit  string `yaml:"requestBodyLimit"`
-	ResponseBodyLimit string `yaml:"responseBodyLimit"`
-	SSEBufferLimit    string `yaml:"sseBufferLimit"`
+	// requestBodyLimit / responseBodyLimit used to live here. Nothing in this
+	// service ever enforced a body size — the fields were parsed, validated,
+	// and dropped — so the yaml advertised a limit that did not exist, and a
+	// typo in it failed the boot, which reads as confirmation that the value
+	// took effect. Body-size enforcement, if it is wanted, belongs back here
+	// as a designed feature with an enforcement point, not as a field.
+	//
+	// The decoder is not strict (plain yaml.Unmarshal, no KnownFields), so an
+	// existing config that still carries them keeps booting; the block is
+	// simply ignored, which is what it already did.
+	SSEBufferLimit string `yaml:"sseBufferLimit"`
 }
 
 // LogConfig controls the structured logging level. Renamed from the
@@ -497,9 +505,7 @@ func validate(cfg *Config) error {
 
 	// Body-size limits
 	for label, raw := range map[string]string{
-		"limits.requestBodyLimit":  cfg.Limits.RequestBodyLimit,
-		"limits.responseBodyLimit": cfg.Limits.ResponseBodyLimit,
-		"limits.sseBufferLimit":    cfg.Limits.SSEBufferLimit,
+		"limits.sseBufferLimit": cfg.Limits.SSEBufferLimit,
 	} {
 		if raw == "" {
 			continue

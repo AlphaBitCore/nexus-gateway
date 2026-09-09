@@ -5,22 +5,23 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/goccy/go-json"
 	"log/slog"
 	"time"
+
+	"github.com/goccy/go-json"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/config"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/platform/store"
+	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/httpclient"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/builtins"
 	hookcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/core"
 	hookwh "github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/hooks/webhook"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/payloadcapture"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/pipeline"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/rulepack"
-	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
 	streampolicy "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/streaming/policy"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/wirerewrite"
 )

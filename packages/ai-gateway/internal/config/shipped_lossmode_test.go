@@ -65,14 +65,13 @@ func TestShippedConfigs_LossModeIsNoLoss(t *testing.T) {
 	}
 }
 
-// The spill posture must be STATED, not merely defaulted (finding S-4).
+// The spill posture must be STATED, not merely defaulted.
 //
-// Before this, none of the four server services' *.config.yaml carried a `spill:`
-// block at all. The factory then returned (nil, nil) and every captured body was
-// kept inline — correct behaviour, but readable only by inferring a Go zero value
-// from source. That is the same silence S-3 exists to remove, one layer up: an
-// operator reading the shipped template could not tell "spill is off" from "spill
-// was never considered".
+// With no `spill:` block in a service's *.config.yaml the factory returns
+// (nil, nil) and every captured body is kept inline — correct behaviour, but
+// readable only by inferring a Go zero value from source. That is the same silence
+// a runtime-source report exists to remove, one layer up: an operator reading the
+// shipped template cannot tell "spill is off" from "spill was never considered".
 //
 // The distinction this test turns on is why it reads the raw bytes as well as the
 // parsed struct: an ABSENT block and `enabled: false` both unmarshal to

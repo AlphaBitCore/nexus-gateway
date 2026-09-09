@@ -60,7 +60,7 @@ func (h *Handler) floorGuard(modelID, requestedModel string, canonical canonical
 // namedModelModalityGuard applies the modality FLOOR + input-modality CEILING
 // to a model the caller NAMED — but only when EnforceNamedModelModality is set.
 //
-// This is the #297 policy at the explicit-model passthrough. Both guards read
+// This is the named-model policy at the explicit-model passthrough. Both guards read
 // the gateway's OWN capability catalogue, which has been wrong (mislabelled
 // video, reasoning). When the caller names the model, they own its limits, so
 // by default the gateway defers the modality verdict to the upstream and only
@@ -96,10 +96,10 @@ func (h *Handler) namedModelModalityGuard(modelID, requestedModel string, canoni
 // and starts enforcing a new one the moment the catalog learns it — no code
 // change, and no guessing in the meantime.
 //
-// That threshold has already been crossed once. This comment used to record
-// that no row declared "file"; the catalog now declares it on 36 of 203 models,
+// That threshold has been crossed once already: the catalog declares "file"
+// on 36 of 203 models, where once no row did,
 // so document requests are enforced against the models that do not. The rule
-// held across the change, which is the point of writing it as a rule rather than
+// held across that change, which is the point of writing it as a rule rather than
 // as a list of modalities.
 //
 // Text is never refused here. The ceiling predicate admits it unconditionally,

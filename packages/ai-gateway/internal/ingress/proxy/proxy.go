@@ -28,11 +28,11 @@ import (
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/specutil"
 	provtarget "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/target"
 	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/routing/capability"
+	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/httpclient"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/payloadcapture"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/policy/pipeline"
 	cfgpolicy "github.com/AlphaBitCore/nexus-gateway/packages/shared/schemas/configtypes/policy"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
-	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
 	normcore "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 	streampolicy "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/streaming/policy"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/wirerewrite"
@@ -173,6 +173,15 @@ type Deps struct {
 	// Normaliser is the prompt cache normalisation engine. Nil disables
 	// both L0 key normalisation and L3 upstream body normalisation.
 	Normaliser *wirerewrite.Engine
+	// PromptCache is the live view of the operator's prompt-cache config.
+	// The cache stage asks it whether the routed provider wants upstream
+	// prompt-cache markers, and hands the answer to the codec on the
+	// CallTarget. Nil answers false for every provider — markers off.
+	//
+	// The executor's own target resolver reads the SAME settings, because
+	// the marker is a body edit: a leg that disagreed would build the cache
+	// key over bytes the other leg does not send.
+	PromptCache promptCacheSettings
 	// GeminiCacheMgrSet holds one Manager per Gemini/Vertex Provider,
 	// each resolved against the three-tier prompt cache config. Nil
 	// disables Gemini cache injection entirely; a nil Manager returned

@@ -23,7 +23,7 @@ import (
 // payload-capture default cap so an unset/invalid runtime config can
 // never collapse the read to zero.
 //
-// Finding C-11. This used to be io.ReadAll over a LimitReader, whose geometric growth
+// io.ReadAll over a LimitReader grows geometrically, which
 // allocates roughly 2.2x the body across O(log n) allocations. Every bumped request pays it,
 // and a chat request body is the one payload on this path that is reliably several KiB.
 // bodyread.Bounded sizes from Content-Length instead — without trusting it as an allocation
@@ -54,8 +54,9 @@ func readBody(r *http.Request, maxBytes int64) ([]byte, error) {
 // still useful for usage extraction / capture, and the upstream stream is
 // abandoned along with the connection.
 //
-// Finding C-11, response half. Takes the whole response rather than just its body so the
-// declared Content-Length can size the buffer; see readBody and the bodyread package doc.
+// The response half of the bounded body read. Takes the whole response rather than just
+// its body so the declared Content-Length can size the buffer; see readBody and the
+// bodyread package doc.
 // A streaming response never reaches here — the SSE path is chosen before this call — so the
 // declared length is present for essentially every body this reads.
 func readResponseBodyBounded(resp *http.Response, maxBytes int64) ([]byte, error) {
@@ -87,6 +88,33 @@ func decompressForCapture(body []byte, resp *http.Response, logger *slog.Logger)
 		)
 	}
 	return out
+}
+
+// positionalRewriteAligned reports whether an adapter's positional
+// RewriteRequestBody can be trusted with this payload's content blocks.
+//
+// RewriteRequestBody walks its own wire's text slots in WIRE order and writes
+// segment i into slot i. That is correct only when the segments came from the
+// SAME adapter's ExtractRequest. Once the registry became the preferred decoder
+// (runtimeNormalize tries it first), they usually come from a canonical decode
+// instead — and canonical BLOCK order is not the adapter's SLOT order.
+//
+// Measured on an Anthropic claims-assistant request: the rewriter was handed 9
+// segments and wrote 3 slots. A `document` block's SSN went upstream
+// unredacted while a tool_result slot was overwritten with a different block's
+// content — and the audit row said action=redact. That is worse than a missed
+// scan: the conversation itself is corrupted and the record is false.
+//
+// The provenance test is exact, not a heuristic: PayloadFromTextSegments — the
+// adapter-extraction fallback, and the only producer whose ordering matches the
+// adapter — stamps Protocol "synthetic". Every registry decode stamps a real
+// protocol name. A nil payload means no decode happened at all, which is the
+// pre-registry shape the positional contract was written for.
+func positionalRewriteAligned(payload *normalize.NormalizedPayload) bool {
+	if payload == nil {
+		return true
+	}
+	return payload.Protocol == "synthetic"
 }
 
 // contentBlocksToNormalized converts hook pipeline ModifiedContent into a
@@ -244,7 +272,7 @@ func runtimeNormalize(
 			case "generic-http":
 				tier = "tier3"
 			}
-			// Debug, and guarded (finding C-9). Which tier claimed a body and at what
+			// Debug, and guarded. Which tier claimed a body and at what
 			// confidence is a debugging aid for normalize misclassification, not an
 			// operational signal: the outcome already reaches the audit row, and this
 			// fired on EVERY normalized request with eight attributes, each of which

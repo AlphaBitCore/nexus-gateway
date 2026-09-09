@@ -1067,7 +1067,7 @@ func TestJobMetadata(t *testing.T) {
 //
 // The reconciliation basis (metric_rollup_1d vendor_spend_usd) is only complete
 // for days the rollup-correction pass has rebuilt from traffic_event. These
-// tests pin the two ways a day past that cursor used to be mis-reported.
+// tests pin the two ways a day past that cursor is mis-reported without it.
 
 // TestReconcile_DefersDayBeyondCorrectionWatermark: a day the correction pass
 // has not reached is not touched at all — no rollup read, no placeholder row.

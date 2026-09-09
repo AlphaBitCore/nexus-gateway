@@ -1,0 +1,15 @@
+{
+  "model": "claude-sonnet-4-5-20250929",
+  "stream": true,
+  "max_tokens": 3000,
+  "thinking": {
+    "type": "enabled",
+    "budget_tokens": 1024
+  },
+  "messages": [
+    {
+      "role": "user",
+      "content": "A farmer has 17 sheep, all but 9 run away. How many are left? Think carefully."
+    }
+  ]
+}

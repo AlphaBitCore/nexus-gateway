@@ -6,16 +6,16 @@ package bootstrap
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
-	"github.com/goccy/go-json"
 	"io"
 	"net/http"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
+	"github.com/goccy/go-json"
+
+	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/httpclient"
 )
 
 // DefaultHTTPClient builds an http.Client suitable for the public
@@ -36,20 +36,15 @@ import (
 // pre-enrollment endpoint switches to system roots.
 //
 // The returned client has a 10 s timeout matching the warm-bootstrap
-// budget in cmd/agent and enforces TLS 1.2+ to match the platform's
-// general posture.
+// budget in cmd/agent. The TLS 1.2 floor is the factory's, on every client
+// rather than only this one.
 func DefaultHTTPClient() *http.Client {
-	return &http.Client{
-		Timeout: 10 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{
-				MinVersion: tls.VersionTLS12,
-			},
-			ForceAttemptHTTP2:   true,
-			MaxIdleConnsPerHost: 2,
-			IdleConnTimeout:     90 * time.Second,
-		},
-	}
+	return nexushttp.New(nexushttp.Config{
+		Timeout:             10 * time.Second,
+		MaxIdleConnsPerHost: 2,
+		IdleConnTimeout:     90 * time.Second,
+		Caller:              "agent-bootstrap",
+	})
 }
 
 // Info is the deployment-wide enrollment metadata served by Hub.

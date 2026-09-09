@@ -22,9 +22,6 @@ const (
 	// bytes from the request body before sending upstream (helps the
 	// provider's prompt-cache hit rate).
 	SourceCacheNormaliser TransformSource = "cache-normaliser"
-	// SourceCacheControlInject — cache_control marker injection
-	// (Nexus added markers to direct the provider's prompt cache).
-	SourceCacheControlInject TransformSource = "cache-control-inject"
 	// SourceCacheKeyStrip — Nexus L1 cache-key normalisation removed
 	// volatile bytes for the cache key computation only; upstream
 	// body unaffected. Recorded for audit completeness.
@@ -44,7 +41,7 @@ const (
 // TransformSpan describes one byte-level modification on a
 // NormalizedPayload. Spans canonicalize every modification a Nexus
 // subsystem made between the client and the upstream: hook redactions,
-// AI-Guard suggestions, cache-normaliser strips, cache_control inject.
+// AI-Guard suggestions, cache-normaliser strips.
 // A single span set drives both inflight rewrite (TrafficAdapter
 // applies them to the upstream-bound body) and storage rewrite (the
 // audit-log copy stored in traffic_event_normalized).
@@ -74,7 +71,7 @@ type TransformSpan struct {
 
 // RedactionSpan is retained as an alias for backward semantic clarity
 // in narrow APIs (hook results), but new code should use TransformSpan
-// directly so non-redact sources (cache normaliser, cache_control
+// directly so non-redact sources (cache normaliser,
 // inject) flow through the same audit channel.
 type RedactionSpan = TransformSpan
 

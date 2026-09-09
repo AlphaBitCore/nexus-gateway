@@ -135,3 +135,63 @@ func TestAccessLog_PropagatesHandlerError(t *testing.T) {
 		t.Fatalf("status=%d want 418 — Echo error handler must still fire", rec.Code)
 	}
 }
+
+// TestAccessLog_RedactsTheOAuthCallbackCredential is the regression for the one
+// inbound flow in this product that carries a credential in a query string.
+//
+// The IdP callback's handler reads `code` (the authorization code) and `state`
+// (this deployment's single-use login handle) off the query, and the access log
+// recorded RawQuery verbatim — so every login wrote a credential to the log. The
+// 5xx arm is the sharp one: it logs at ERROR, which the diag MultiHandler
+// absorbs whole and ships to the Hub as a persisted diag_event row, and the OIDC
+// handler's 500 fires on a DB failure BEFORE the code exchange, so the value
+// stored is an UNREDEEMED code.
+//
+// The assertion is on the raw log bytes, not on the parsed "query" field: a
+// credential that leaked into any other attr would still be a leak.
+func TestAccessLog_RedactsTheOAuthCallbackCredential(t *testing.T) {
+	t.Parallel()
+
+	const authzCode = "4-0AVGsecretcode"
+	const loginHandle = "authctx-9f2b"
+
+	for _, status := range []int{http.StatusFound, http.StatusInternalServerError} {
+		var buf bytes.Buffer
+		logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+		e := echo.New()
+		req := httptest.NewRequest(http.MethodGet,
+			"/authserver/idp/okta/callback?code="+authzCode+"&state="+loginHandle+"&idp=okta", nil)
+		rec := httptest.NewRecorder()
+		c := e.NewContext(req, rec)
+
+		h := middleware.AccessLog(logger)(func(c echo.Context) error {
+			return c.NoContent(status)
+		})
+		if err := h(c); err != nil {
+			t.Fatalf("handler: %v", err)
+		}
+
+		raw := buf.String()
+		if strings.Contains(raw, authzCode) {
+			t.Fatalf("status %d: the authorization code was written to the access log: %s", status, raw)
+		}
+		if strings.Contains(raw, loginHandle) {
+			t.Fatalf("status %d: the login handle was written to the access log: %s", status, raw)
+		}
+		// Redaction must not blind the operator to WHICH callback failed.
+		if !strings.Contains(raw, "idp=okta") {
+			t.Errorf("status %d: the non-sensitive query context was dropped: %s", status, raw)
+		}
+		recs := readLogLines(t, raw)
+		if len(recs) != 1 {
+			t.Fatalf("status %d: want 1 log record, got %d", status, len(recs))
+		}
+		// The marker arrives percent-encoded (%2A%2A%2A) because the redacted
+		// query is re-encoded, matching the outbound redactor this shares its
+		// parameter list with. Either spelling proves the value was replaced.
+		if q, _ := recs[0]["query"].(string); !strings.Contains(q, "***") && !strings.Contains(q, "%2A%2A%2A") {
+			t.Errorf("status %d: query field carries no redaction marker: %q", status, q)
+		}
+	}
+}

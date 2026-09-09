@@ -215,14 +215,14 @@ func TestPiiDetector_Redact_EmbeddingInputsAddressing(t *testing.T) {
 }
 
 // TestPiiDetector_Redact_ReasoningAndToolResultAddressing covers the
-// ContentReasoning (scope-gated) and ContentToolResult addressing branches in
-// collectRedactions. Scope=include_reasoning opts reasoning blocks in; the
-// tool-result output carries its own ".toolResult" address suffix.
+// ContentReasoning and ContentToolResult addressing branches in
+// collectRedactions: a reasoning block must be addressable, or a match found in
+// it would have nowhere to be masked; the tool-result output carries its own
+// ".toolResult" address suffix.
 func TestPiiDetector_Redact_ReasoningAndToolResultAddressing(t *testing.T) {
 	cfg := makePiiConfig([]map[string]any{
 		{"id": "email", "regex": `\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b`, "flags": "i"},
 	}, "redact")
-	cfg.Scope = "include_reasoning"
 
 	h, err := NewPiiDetector(cfg)
 	if err != nil {

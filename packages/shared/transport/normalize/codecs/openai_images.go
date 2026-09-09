@@ -150,7 +150,7 @@ func (n *OpenAIImagesNormalizer) normalizeResponse(raw []byte, meta core.Meta) (
 		case d.URL != "":
 			// A generated-image URL is provider-hosted and expires; the
 			// gateway never fetched it, so it is an inert external ref
-			// rather than the text marker this used to degrade to.
+			// rather than a text marker.
 			blocks = append(blocks, mediaBlock(externalMedia("", d.URL, core.ModalityImage)))
 		}
 	}

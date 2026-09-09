@@ -41,11 +41,10 @@ type SmartModelRow struct {
 	Features        []string
 	// InputModalities is what the model accepts, and the only thing consulted
 	// for a modality question — by the capability filter and by the router
-	// LLM's catalog alike. `Features` used to carry a "vision" entry saying
-	// the same thing in a second vocabulary, and the two disagreed on 34
-	// production rows; it is no longer stored. Features keeps the
-	// capabilities that are not modalities (streaming, function_calling,
-	// json_mode, thinking).
+	// LLM's catalog alike. `Features` must not carry a "vision" entry saying
+	// the same thing in a second vocabulary: the two disagreed on 34
+	// production rows. Features keeps the capabilities that are not
+	// modalities (streaming, function_calling, json_mode, thinking).
 	//
 	// Not all of them are routing CONSTRAINTS, and `streaming` is the one that
 	// looks like it should be. It discriminates — the rows without it are the

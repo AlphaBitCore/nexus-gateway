@@ -1,0 +1,10 @@
+{
+  "model": "deepseek-reasoner",
+  "max_tokens": 300,
+  "messages": [
+    {
+      "role": "user",
+      "content": "2+2? one word"
+    }
+  ]
+}

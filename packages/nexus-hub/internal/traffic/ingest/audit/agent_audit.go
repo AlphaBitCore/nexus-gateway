@@ -36,7 +36,7 @@ type AgentAuditEvent struct {
 	ID      string `json:"id"`
 	TraceID string `json:"traceId,omitempty"`
 	// The CALLER's own request id, carried up from the agent. Distinct from
-	// TraceID, which is ours and groups a unit of work. Without it here the
+	// TraceID, which is the caller's own W3C trace. Without it here the
 	// agent captures the value, stores it, uploads it, and the Hub drops it
 	// on the floor — which is the same silence as never capturing it.
 	ExternalRequestID string `json:"externalRequestId,omitempty"`
@@ -183,8 +183,12 @@ func (h *AgentAuditAPI) UploadAgentAudit(c echo.Context) error {
 
 	ctx := c.Request().Context()
 	accepted := make([]string, 0, len(events))
+	// Ids this Hub could not enqueue. An event dropped here used to vanish
+	// silently while the response still reported success, so the agent had
+	// no way to know a compliance record was lost and would never retry it.
+	var rejected []string
 
-	for _, evt := range events {
+	for evtIdx, evt := range events {
 		envelope := map[string]any{
 			"id":            evt.ID,
 			"timestamp":     evt.Timestamp,
@@ -225,12 +229,20 @@ func (h *AgentAuditAPI) UploadAgentAudit(c echo.Context) error {
 			// downstream by joining thing_id → DeviceAssignment → user → org.
 			// They are deliberately NOT read from evt.* — that would re-open the
 			// cross-VK / cross-org forgery.
-			"entityType":        "",
-			"entityId":          "",
-			"entityName":        "",
-			"orgId":             "",
-			"orgName":           "",
-			"identity":          "",
+			"entityType": "",
+			"entityId":   "",
+			"entityName": "",
+			"orgId":      "",
+			"orgName":    "",
+			// identity is stamped "pending" rather than blanked, because
+			// blanking it also erases the REQUEST to resolve. The enricher
+			// selects on identity->>'status' = 'pending'; an empty string is a
+			// JSON string with no 'status' key, so it matches nothing and the
+			// downstream resolution promised two comments above never runs —
+			// every agent row's entity_* stayed NULL forever. The value is
+			// server-authored here, not copied from the node, so it re-opens
+			// no forgery: it says "resolve me", not "I am X".
+			"identity":          map[string]any{"status": "pending"},
 			"apiKeyFingerprint": "",
 			"thingId":           thingID,
 			"thingName":         thingName,
@@ -240,9 +252,10 @@ func (h *AgentAuditAPI) UploadAgentAudit(c echo.Context) error {
 		//
 		// Three things in this repo assume that. The ops-metrics writers say
 		// so outright — they write NULL "so admin queries can filter WHERE
-		// trace_id IS NULL cleanly". The ai-gateway producer's message uses
-		// omitempty and yields NULL. And the traffic_event trace index is
-		// PARTIAL on `WHERE trace_id IS NOT NULL`, so '' rows would enter an
+		// external_request_id IS NULL cleanly". The ai-gateway producer's
+		// message uses omitempty and yields NULL. And the traffic_event
+		// correlation indexes are PARTIAL on `IS NOT NULL`, so '' rows would
+		// enter an
 		// index they can never be found through.
 		//
 		// A column that is NULL from one producer and '' from another makes
@@ -323,9 +336,21 @@ func (h *AgentAuditAPI) UploadAgentAudit(c echo.Context) error {
 
 		data, err := json.Marshal(envelope)
 		if err != nil {
+			if evt.ID != "" {
+				rejected = append(rejected, evt.ID)
+			}
 			continue
 		}
 		if err := h.MQProducer.Enqueue(ctx, "nexus.event.agent", data); err != nil {
+			// The queue is down. This event and EVERY remaining one in the
+			// batch are un-persisted, and the response is still a 200 — so
+			// without naming them the caller reads a partial `accepted` as a
+			// complete delivery and the rest are lost with no error anywhere.
+			for _, remaining := range events[evtIdx:] {
+				if remaining.ID != "" {
+					rejected = append(rejected, remaining.ID)
+				}
+			}
 			break
 		}
 		if evt.ID != "" {
@@ -333,9 +358,14 @@ func (h *AgentAuditAPI) UploadAgentAudit(c echo.Context) error {
 		}
 	}
 
-	return c.JSON(http.StatusOK, map[string]any{
-		"accepted": accepted,
-	})
+	resp := map[string]any{"accepted": accepted}
+	// Additive and omitted when empty, so an older agent decoding this
+	// response is unaffected (1.0 back-compat rule for a shipped agent-Hub
+	// route).
+	if len(rejected) > 0 {
+		resp["rejected"] = rejected
+	}
+	return c.JSON(http.StatusOK, resp)
 }
 
 // buildAgentBody folds the agent's per-direction (inline | spill | absent)

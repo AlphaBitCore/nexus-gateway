@@ -294,7 +294,7 @@ type Broker struct {
 }
 
 // newBroker constructs a broker but does NOT start the pump. The
-// caller (Registry, in Task 7) is responsible for `go b.pump(session)`
+// caller (Registry) is responsible for `go b.pump(session)`
 // after acquiring the upstream session via LeaderFn.
 //
 // parentCtx is the registry-level lifetime; the broker derives a
@@ -368,7 +368,7 @@ func (b *Broker) pump(session provcore.StreamSession) {
 // writeCache persists the collected chunks to the cache. Streaming
 // brokers persist a StreamEntry; non-streaming brokers persist a
 // ResponseEntry built from the single terminal chunk's Delta (which
-// the non-streaming wrapper at Task 11 will populate with the
+// the non-streaming wrapper populates with the
 // canonical response JSON).
 func (b *Broker) writeCache(collected []provcore.Chunk) {
 	if b.cache == nil {
@@ -430,7 +430,7 @@ func (b *Broker) writeCache(collected []provcore.Chunk) {
 		return
 	}
 
-	// Non-streaming: the wrapper (Task 11) emits a single Done chunk
+	// Non-streaming: the wrapper emits a single Done chunk
 	// whose Delta carries the canonical response JSON.
 	if len(collected) == 0 || !collected[len(collected)-1].Done {
 		return

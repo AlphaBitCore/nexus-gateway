@@ -3,7 +3,6 @@ package jwtverifier
 import (
 	"context"
 	"fmt"
-	"github.com/goccy/go-json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -14,10 +13,12 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/goccy/go-json"
+
 	"github.com/bits-and-blooms/bloom/v3"
 
+	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/httpclient"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/identity/rstokenauth"
-	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
 )
 
 // minEventShape is the subset of a nexus.auth.revocation payload consumed by
@@ -63,9 +64,9 @@ type MQCheckerConfig struct {
 	// service-to-service CP calls, so a service token is the credential they can
 	// actually present — this checker holds no IAM identity.
 	//
-	// It was previously sent as `Authorization: Bearer <token>`, which the replay
-	// endpoint's guard does not read and the introspect handler ignores entirely.
-	// The replay route therefore answered 401 on every poll.
+	// Sent as `Authorization: Bearer <token>` instead, the replay
+	// endpoint's guard does not read it and the introspect handler ignores it
+	// entirely, so the replay route answers 401 on every poll.
 	ServiceToken string
 
 	// HTTPClient is used for introspect and replay requests. Defaults to a
@@ -401,7 +402,19 @@ func (c *MQRevocationChecker) StartConsumer(
 				last := time.Unix(c.lastEvent.Load(), 0)
 				if time.Since(last) > c.cfg.DisconnectTimeout && !c.strict.Load() {
 					if c.strict.CompareAndSwap(false, true) {
-						c.cfg.Logger.Warn("mqrevocation: entering strict mode",
+						// Silence is not proof of a dead subscription — an idle
+						// deployment revokes nothing and is silent by nature —
+						// so this fires on every restart. It is survivable only
+						// because a successful catchup clears it again; note
+						// that RunCatchup refreshes lastEvent, so a reachable
+						// replay endpoint keeps this from firing at all.
+						//
+						// While strict, every check goes to introspect and any
+						// error from that call rejects the token, so this is a
+						// deny-everything state, not a degraded one.
+						c.cfg.Logger.Warn("mqrevocation: entering strict mode; "+
+							"every token is now checked against introspect and an "+
+							"unreachable introspect will reject all of them",
 							slog.String("reason", "no messages received"),
 							slog.Duration("silence", time.Since(last)),
 						)
@@ -510,6 +523,27 @@ func (c *MQRevocationChecker) RunCatchup(ctx context.Context) error {
 
 		// Fewer events than the page size means we have reached the tail.
 		if len(body.Events) < catchupPageLimit {
+			// Reaching the tail is the STRONGEST evidence of currency there is:
+			// the replay endpoint answered and had nothing left to give, so
+			// nothing has been missed. It is stronger than "a message arrived",
+			// which is all the consumer's liveness ticker looks for.
+			//
+			// Clearing only when events came back was the defect. On a quiet
+			// deployment every catchup legitimately returns zero events, so a
+			// checker that entered strict mode — which a CP does about thirty
+			// seconds into every restart, because silence on the stream is
+			// indistinguishable from a dead subscription — could prove itself
+			// current on every subsequent catchup and still never leave. While
+			// strict, IsRevoked routes every check to introspect, and
+			// jwt.Verifier turns any error from that call into a rejected
+			// token. A deployment in that state refuses valid credentials while
+			// reporting itself entirely healthy.
+			if c.strict.CompareAndSwap(true, false) {
+				c.cfg.Logger.Info("mqrevocation: leaving strict mode",
+					slog.String("reason", "catchup reached the tail"),
+					slog.Int64("lastId", c.lastID.Load()),
+				)
+			}
 			return nil
 		}
 	}

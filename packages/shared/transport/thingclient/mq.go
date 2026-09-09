@@ -247,10 +247,34 @@ func (c *Client) flushMQBuffer(ctx context.Context) {
 
 // --- Agent Audit Upload ---
 
-// AuditBatchResponse is the response from Hub's audit upload endpoint.
+// AuditBatchResponse is the response from POST /api/internal/things/audit
+// (the legacy envelope route). `accepted` is a COUNT here.
+//
+// It is deliberately NOT shared with /things/agent-audit, and cannot be:
+// /things/audit returns {ack, accepted:<count>, eventIds:[…]} while
+// /things/agent-audit returns {accepted:[…]} — the same field name carrying a
+// list on one route and a count on the other. Reading both through one struct
+// means at least one of them silently decodes to a zero value.
+//
+// `confirmedIds` is absent for the same reason: no Hub route sends it, so
+// declaring it buys a field that decodes to nil on every call.
 type AuditBatchResponse struct {
-	Ack          bool     `json:"ack"`
-	ConfirmedIDs []string `json:"confirmedIds"`
+	Ack      bool     `json:"ack"`
+	Accepted int      `json:"accepted"`
+	EventIDs []string `json:"eventIds"`
+	// Rejected carries the ids Hub could not enqueue. Additive and omitted
+	// when empty, so an older Hub that does not send it decodes to nil.
+	Rejected []string `json:"rejected,omitempty"`
+}
+
+// AgentAuditBatchResponse is the response from POST
+// /api/internal/things/agent-audit (the canonical agent emit route).
+// `accepted` is a LIST of event ids here, not a count.
+type AgentAuditBatchResponse struct {
+	Accepted []string `json:"accepted"`
+	// Rejected carries the ids Hub could not enqueue. Additive and omitted
+	// when empty, so an older Hub that does not send it decodes to nil.
+	Rejected []string `json:"rejected,omitempty"`
 }
 
 // UploadAgentAudit uploads agent-captured audit events to Hub via HTTP
@@ -267,7 +291,7 @@ type AuditBatchResponse struct {
 // agent inspect rows. Routing agent uploads to agent-audit fixes
 // body persistence end-to-end. The legacy UploadAudit is preserved
 // below for any caller still on the cp-shape envelope (none today).
-func (c *Client) UploadAgentAudit(ctx context.Context, events []byte) (*AuditBatchResponse, error) {
+func (c *Client) UploadAgentAudit(ctx context.Context, events []byte) (*AgentAuditBatchResponse, error) {
 	hc := c.getHTTPClient()
 	// Agent-audit handler expects a raw JSON array; no envelope wrap.
 	body, status, err := hc.do(ctx, "POST", "/api/internal/things/agent-audit", json.RawMessage(events))
@@ -277,7 +301,7 @@ func (c *Client) UploadAgentAudit(ctx context.Context, events []byte) (*AuditBat
 	if status != 200 {
 		return nil, fmt.Errorf("agent-audit upload: HTTP %d: %s", status, string(body))
 	}
-	var resp AuditBatchResponse
+	var resp AgentAuditBatchResponse
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return nil, fmt.Errorf("agent-audit upload: unmarshal response: %w", err)
 	}
@@ -287,7 +311,7 @@ func (c *Client) UploadAgentAudit(ctx context.Context, events []byte) (*AuditBat
 }
 
 // UploadAgentAuditWithRetry wraps UploadAgentAudit with exponential backoff.
-func (c *Client) UploadAgentAuditWithRetry(ctx context.Context, events []byte, maxRetries int) (*AuditBatchResponse, error) {
+func (c *Client) UploadAgentAuditWithRetry(ctx context.Context, events []byte, maxRetries int) (*AgentAuditBatchResponse, error) {
 	if maxRetries <= 0 {
 		maxRetries = 3
 	}
@@ -326,7 +350,7 @@ func (c *Client) UploadAgentAuditWithRetry(ctx context.Context, events []byte, m
 //
 // Wire shape: Hub's /api/internal/things/audit handler expects the body
 // to be a JSON object `{thingId, events:[...]}` (see
-// nexus-hub/internal/handler/internal_things.go:AuditUpload). Sending
+// packages/nexus-hub/internal/fleet/handler/hubapi/internal_things.go:AuditUpload). Sending
 // the raw events array — sending the raw array instead of the
 // wrapped envelope produces silently-failing HTTP 400 "invalid request
 // body" even after the X-Thing-Id header is present.
@@ -354,9 +378,14 @@ func (c *Client) UploadAudit(ctx context.Context, events []byte) (*AuditBatchRes
 
 	c.promMetrics.httpFallbackReqs.WithLabelValues("audit_upload").Inc()
 
+	// Reads EventIDs, which is what /things/audit actually sends. This line
+	// read resp.ConfirmedIDs — a field NO route has ever sent — so it logged
+	// "confirmed=0" on every successful upload, for as long as it has existed.
 	c.logger.Debug("Audit batch uploaded",
 		slog.String("event", "audit_uploaded"),
-		slog.Int("confirmed", len(resp.ConfirmedIDs)),
+		slog.Int("accepted", resp.Accepted),
+		slog.Int("confirmed", len(resp.EventIDs)),
+		slog.Int("rejected", len(resp.Rejected)),
 	)
 
 	return &resp, nil

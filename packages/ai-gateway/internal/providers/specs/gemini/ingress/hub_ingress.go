@@ -30,7 +30,10 @@ func GenerateContentRequestToOpenAIChatCompletion(native []byte, model string) (
 	}
 	out := map[string]any{"model": model}
 
-	if gc := root.Get("generationConfig"); gc.Exists() {
+	// Both spellings: a caller using the protobuf form used to have every
+	// generation parameter silently dropped — default temperature, no output
+	// cap, no stop sequences — on the way to a non-Gemini target.
+	if gc := specutil.GeminiFirst(root, specutil.GeminiGenerationConfigPaths); gc.Exists() {
 		if v := gc.Get("temperature"); v.Exists() {
 			out["temperature"] = v.Float()
 		}
@@ -79,7 +82,9 @@ func GenerateContentRequestToOpenAIChatCompletion(native []byte, model string) (
 	}
 
 	var messages []map[string]any
-	if si := root.Get("systemInstruction.parts"); si.Exists() && si.IsArray() {
+	// Both spellings, for the same reason — and this one loses the system
+	// prompt itself, so the model answers with no instruction at all.
+	if si := specutil.GeminiFirst(root, specutil.GeminiSystemInstructionPaths); si.IsArray() {
 		var sys string
 		si.ForEach(func(_, p gjson.Result) bool {
 			if p.Get("text").Exists() {
@@ -160,7 +165,21 @@ func GenerateContentRequestToOpenAIChatCompletion(native []byte, model string) (
 						} else {
 							images = append(images, map[string]any{
 								"type": "file",
-								"file": map[string]any{"file_data": url},
+								"file": map[string]any{
+									"file_data": url,
+									// OpenAI REJECTS a file part carrying
+									// file_data with no filename, and Gemini's
+									// inlineData has nowhere to keep one — so a
+									// name that arrived on an OpenAI request and
+									// crossed this wire cannot come back. Supply
+									// one from the declared mime, the same
+									// adapter auto-fill the Anthropic max_tokens
+									// default uses: the protocol-required field
+									// is filled from what the wire does state,
+									// rather than failing a request that was
+									// valid when it arrived.
+									"filename": specutil.FilenameForMime(mime),
+								},
 							})
 						}
 					}
@@ -327,7 +346,12 @@ func GenerateContentRequestToOpenAIChatCompletion(native []byte, model string) (
 	// no budget, and the only sign was the answer arriving without the
 	// reasoning it paid for. `thinkingBudget: -1` (Gemini for "you decide") is
 	// carried through unchanged; it is an expression, not an absent value.
-	if tc := root.Get("generationConfig.thinkingConfig"); tc.Exists() && tc.IsObject() {
+	//
+	// Read through the shared spelling list like every other generation
+	// parameter above. Left on the camelCase-only path this was the one field a
+	// protobuf-spelled request still lost, which is worse than losing all of
+	// them: a partial translation looks like it worked.
+	if tc := specutil.GeminiFirst(root, specutil.GeminiGenerationConfigPaths).Get("thinkingConfig"); tc.IsObject() {
 		var cfg any
 		if jerr := json.Unmarshal([]byte(tc.Raw), &cfg); jerr == nil && cfg != nil {
 			body, err = canonicalext.Set(body, "gemini", "thinking_config", cfg)

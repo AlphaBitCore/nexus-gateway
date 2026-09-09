@@ -15,7 +15,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/credentials/pool"
+	credpool "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/credentials/pool"
 	provcore "github.com/AlphaBitCore/nexus-gateway/packages/ai-gateway/internal/providers/core"
 )
 
@@ -138,6 +138,18 @@ type PgResolver struct {
 	Models      ModelStore
 	Credentials CredentialStore
 	Redis       redis.Cmdable // optional; nil = no circuit awareness
+	// PromptCache answers whether the resolved provider wants upstream
+	// prompt-cache markers. Optional; nil = markers off, which is also the
+	// answer before any cache config has arrived.
+	PromptCache PromptCacheSettings
+}
+
+// PromptCacheSettings is the resolver's view of the live prompt-cache
+// configuration. Narrowed to the one question the resolver asks so a test can
+// supply an answer without a config blob.
+type PromptCacheSettings interface {
+	MarkersEnabled(providerID, adapterType string) bool
+	BoundaryEnabled(providerID, adapterType string) bool
 }
 
 // NewPgResolver constructs a [PgResolver].
@@ -191,6 +203,14 @@ func (r *PgResolver) Resolve(ctx context.Context, providerID, modelID string, hi
 		Reasons:            mr.Reasons,
 		ServesResponsesAPI: pr.ServesResponsesAPI,
 	}
+	// Body-shaping, so it is resolved here AND in the cache stage's
+	// bodyPrepCallTarget from this same live source. Both legs must agree or
+	// the executor's re-prepared body would differ from the one whose cache
+	// key was built.
+	if r.PromptCache != nil {
+		target.PromptCacheMarkers = r.PromptCache.MarkersEnabled(pr.ID, pr.AdapterType)
+		target.PromptCacheBoundary = r.PromptCache.BoundaryEnabled(pr.ID, pr.AdapterType)
+	}
 	if len(pr.Extras) > 0 {
 		target.Extras = make(map[string]string, len(pr.Extras))
 		for k, v := range pr.Extras {
@@ -220,9 +240,28 @@ func (r *PgResolver) resolveCredential(ctx context.Context, providerID string, h
 		return r.Credentials.ResolveForProvider(ctx, providerID, hints.CredentialID)
 	}
 	candidates, err := r.Credentials.ListForProvider(ctx, providerID)
-	if err != nil || len(candidates) == 0 {
-		// Fall back to single-credential path on error or empty list.
+	if err != nil {
+		// The LIST failed — we do not know what is available, so ask for the
+		// single newest usable credential rather than refuse the request over a
+		// query error.
 		return r.Credentials.ResolveForProvider(ctx, providerID, "")
+	}
+	if len(candidates) == 0 {
+		// An empty list is an ANSWER, not a failure: nothing this provider owns
+		// is currently usable. This used to fall through to the same
+		// single-credential path as the error above, which is how draining every
+		// credential to selectionWeight 0 kept serving traffic — the list
+		// excluded them and the fallback query did not. Both predicates agree
+		// now, so the fallback would return no rows anyway; saying so here keeps
+		// the operator's answer specific instead of a bare "no rows".
+		// The message stops short of naming a single cause, because an empty
+		// list has three: every credential drained/disabled/retired, no
+		// credential rows at all, or a credential snapshot that has not loaded
+		// yet (the list read has no loaded-state guard and returns empty, not an
+		// error, before the first load). Asserting "someone drained them" sends
+		// an operator to undrain a credential that may not exist.
+		return "", "", "", fmt.Errorf(
+			"no usable credential for provider %q: none is enabled, active and above selectionWeight 0 — check that the provider has a credential and that it is not drained", providerID)
 	}
 	if len(candidates) == 1 {
 		return r.Credentials.ResolveForProvider(ctx, providerID, candidates[0].ID)

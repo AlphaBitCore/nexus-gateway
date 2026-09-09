@@ -77,7 +77,7 @@ func (s *stubAdapter) Probe(ctx context.Context, t provcore.CallTarget) (*provco
 func (s *stubAdapter) Execute(context.Context, provcore.Request) (*provcore.Response, error) {
 	panic("stubAdapter.Execute must not be called from CredentialProbeHandler")
 }
-func (s *stubAdapter) PrepareBody(provcore.Request) ([]byte, []string, string, error) {
+func (s *stubAdapter) PrepareBody(provcore.Request) (provcore.PreparedBody, error) {
 	panic("stubAdapter.PrepareBody must not be called from CredentialProbeHandler")
 }
 func (s *stubAdapter) ExecuteWithBody(context.Context, provcore.Request, []byte, []string, string) (*provcore.Response, error) {

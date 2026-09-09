@@ -26,7 +26,7 @@ func newBenchQueue(b *testing.B) *Queue {
 	return q
 }
 
-// Finding A-4's remainder, priced rather than argued.
+// The remainder of the idle-wakeup question, priced rather than argued.
 //
 // backpressure.Store.Poll wakes every 2 s and calls Queue.UnsyncedCount, which is
 // SELECT COUNT(*) FROM audit_events WHERE synced = 0 against the encrypted queue —
@@ -46,8 +46,8 @@ func newBenchQueue(b *testing.B) *Queue {
 // The idle case is nearly free because idx_audit_synced_created makes the synced = 0
 // index prefix EMPTY when everything has been uploaded — the query touches almost
 // nothing. 0.18 s of CPU per day does not justify a new correctness invariant on this
-// path. Re-open A-4's remainder only if this benchmark's idle number moves materially,
-// e.g. if the index is dropped or the predicate changes.
+// path. Re-open the event-driven question only if this benchmark's idle number moves
+// materially, e.g. if the index is dropped or the predicate changes.
 func benchUnsynced(b *testing.B, unsyncedRows int) {
 	q := newBenchQueue(b)
 	if unsyncedRows > 0 {

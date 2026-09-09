@@ -29,10 +29,10 @@ import (
 )
 
 // regexCache memoises compiled predicate regexes keyed by pattern string.
-// The `regex` op previously recompiled the pattern on every Evaluate call;
-// membership recompute runs the same smart-group predicate against every
-// device on a 60s cadge, so a single group with a regex leaf recompiled the
-// pattern N-devices times per cycle. Compiling once and reusing the immutable
+// Recompiling on every Evaluate call is what this avoids: membership
+// recompute runs the same smart-group predicate against every device on a
+// 60s cadence, so one group with a regex leaf would recompile the pattern
+// N-devices times per cycle. Compiling once and reusing the immutable
 // *regexp.Regexp (concurrency-safe) keeps recompute O(1) in pattern count.
 // A bad pattern is never cached (compileRegex returns the error to the
 // caller), so a typo still surfaces as a predicate-shape error every call.

@@ -19,7 +19,7 @@ package proxy
 import (
 	"context"
 	"errors"
-	"github.com/goccy/go-json"
+	"fmt"
 	"log/slog"
 	"math"
 	"net/http"
@@ -27,6 +27,10 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/goccy/go-json"
+
+	normalize "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/normalize/core"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/prometheus/client_golang/prometheus"
@@ -122,21 +126,37 @@ func (responseBlockSoftHook) Execute(_ context.Context, _ *goHooks.HookInput) (*
 	}, nil
 }
 
-// responseModifyHook returns Modify with a single ContentBlock that the
-// OpenAI traffic adapter knows how to splice into the response body. The
-// modified content replaces the assistant text — RewriteResponseBody on the
-// OpenAI adapter mutates `choices[0].message.content`.
+// responseModifyHook returns Modify with a TransformSpan replacing the whole
+// assistant text, which is how a Modify hook expresses an edit: spans address
+// canonical content blocks, and the codec writes the edited block back to the
+// wire slot it was decoded from.
 type responseModifyHook struct {
 	goHooks.AnyEndpointAnyModality
 }
 
-func (responseModifyHook) Execute(_ context.Context, _ *goHooks.HookInput) (*goHooks.HookResult, error) {
-	return &goHooks.HookResult{
-		Decision: goHooks.Modify,
-		ModifiedContent: []goHooks.ContentBlock{
-			{Role: "assistant", Type: "text", Text: "modified by response hook"},
-		},
-	}, nil
+func (responseModifyHook) Execute(_ context.Context, in *goHooks.HookInput) (*goHooks.HookResult, error) {
+	res := &goHooks.HookResult{Decision: goHooks.Modify}
+	if in == nil || in.Normalized == nil {
+		return res, nil
+	}
+	for mi, m := range in.Normalized.Messages {
+		for bi, b := range m.Content {
+			if b.Type != normalize.ContentText || b.Text == "" {
+				continue
+			}
+			res.TransformSpans = append(res.TransformSpans, normalize.TransformSpan{
+				Source:         normalize.SourceHook,
+				SourceID:       "resp-hook",
+				Action:         normalize.ActionReplace,
+				ContentAddress: fmt.Sprintf("messages.%d.content.%d", mi, bi),
+				Start:          0,
+				End:            len(b.Text),
+				Replacement:    "modified by response hook",
+			})
+			return res, nil
+		}
+	}
+	return res, nil
 }
 
 // newResponseHookCache wires a HookConfigCache serving a single hook
@@ -231,6 +251,7 @@ func makeOpenAIDeps(t *testing.T, upstreamURL string, hookCache *compliance.Hook
 	t.Cleanup(depsHT.Stop)
 
 	deps := &Deps{
+		NormalizeRegistry: canonicalRegistry(),
 		VKAuth: &stubVKAuthCacheTest{meta: &vkauth.VKMeta{
 			ID:               "vk-1",
 			Name:             "test-vk",
@@ -338,7 +359,8 @@ func computeStreamCacheKey(t *testing.T, deps *Deps, provider, model string, bod
 		Stream:     isStream,
 	}
 	prepReq.Target.ProviderModelID = model
-	finalBody, _, _, err := adapter.PrepareBody(prepReq)
+	finalBodyPrep, err := adapter.PrepareBody(prepReq)
+	finalBody, _, _ := finalBodyPrep.Body, finalBodyPrep.Rewrites, finalBodyPrep.URLOverride
 	if err != nil {
 		t.Fatalf("PrepareBody: %v", err)
 	}

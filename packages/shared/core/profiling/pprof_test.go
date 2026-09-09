@@ -234,7 +234,7 @@ func TestDumpProfiles_UncreatableDir(t *testing.T) {
 	}
 	_ = f.Close()
 	cpuRunning.Store(false)
-	dumpProfiles("svc", f.Name(), 1) // Join under a file → all Create calls fail
+	dumpProfilesForTest("svc", f.Name(), 1) // Join under a file → all Create calls fail
 }
 
 // dumpProfiles called directly (no signal race) writes all four profile kinds,
@@ -242,7 +242,7 @@ func TestDumpProfiles_UncreatableDir(t *testing.T) {
 func TestDumpProfiles_WritesAll(t *testing.T) {
 	dir := t.TempDir()
 	cpuRunning.Store(false)
-	dumpProfiles("svc", dir, 1) // 1s CPU window
+	dumpProfilesForTest("svc", dir, 1) // 1s CPU window
 
 	want := map[string]bool{"heap": false, "goroutine": false, "allocs": false, "cpu": false, "memstats": false}
 	for _, e := range mustReadDir(t, dir) {
@@ -270,7 +270,7 @@ func TestDumpProfiles_CPUAlreadySkips(t *testing.T) {
 	dir := t.TempDir()
 	cpuRunning.Store(true)
 	defer cpuRunning.Store(false)
-	dumpProfiles("svc", dir, 1)
+	dumpProfilesForTest("svc", dir, 1)
 	// heap/goroutine/allocs snapshots written; no cpu file (skipped).
 	for _, e := range mustReadDir(t, dir) {
 		if filepathHasKind(e.Name(), "cpu") {
@@ -293,7 +293,7 @@ func TestDumpProfiles_StartCPUFails(t *testing.T) {
 	}
 	defer pprof.StopCPUProfile()
 	cpuRunning.Store(false)
-	dumpProfiles("svc", dir, 1) // inner StartCPUProfile fails (already running)
+	dumpProfilesForTest("svc", dir, 1) // inner StartCPUProfile fails (already running)
 }
 
 func TestWriteMemStats(t *testing.T) {
@@ -424,11 +424,11 @@ func TestStartSignalDump_NoSignalIsAnnouncedNotArmed(t *testing.T) {
 	}
 }
 
-// The exposure of the pprof endpoint is REPORTED, not assumed. The line used to
-// say "(loopback profiling)" for whatever address the operator gave — and
-// .env.example suggests ":6060", a wildcard bind — so it asserted the endpoint
-// was unreachable off-box while advertising the opposite. A heap profile on a
-// gateway carries request-body bytes, so the label is about real content.
+// The exposure of the pprof endpoint is REPORTED, not assumed. A line saying
+// "(loopback profiling)" for whatever address the operator gave asserts the
+// endpoint is unreachable off-box while advertising the opposite — and
+// .env.example suggests ":6060", a wildcard bind. A heap profile on a gateway
+// carries request-body bytes, so the label is about real content.
 func TestStartHTTP_ReportsTheActualExposure(t *testing.T) {
 	t.Run("loopback bind says loopback", func(t *testing.T) {
 		var buf bytes.Buffer
@@ -507,5 +507,69 @@ func TestStartSignalDump_DisarmStopsTheHandler(t *testing.T) {
 	// been delivered the same signal and written by now.
 	if got := mustReadDir(t, disarmedDir); len(got) != 0 {
 		t.Errorf("the disarmed handler still wrote %d file(s); signal.Stop did not take effect", len(got))
+	}
+}
+
+// dumpProfilesForTest calls dumpProfiles with a never-closed done channel, so
+// the tests exercise the full-duration path they were written against.
+func dumpProfilesForTest(name, dir string, cpuSecs int) {
+	dumpProfiles(name, dir, cpuSecs, make(chan struct{}))
+}
+
+// A capture still running when profiling is disarmed keeps writing into a
+// directory the service has stopped accounting for, and the CPU profile runs
+// for cpuSeconds (20 by default), so the window is wide. Waiting for it instead
+// would stall shutdown for those same 20 seconds. Closing `done` cuts the
+// capture short, so the disarm can then wait without stalling.
+func TestDumpProfiles_DoneCutsTheCPUCaptureShort(t *testing.T) {
+	dir := t.TempDir()
+	done := make(chan struct{})
+
+	// A capture long enough that finishing it would dominate the measurement.
+	const cpuSecs = 30
+
+	start := time.Now()
+	finished := make(chan struct{})
+	go func() {
+		defer close(finished)
+		dumpProfiles("cut-short", dir, cpuSecs, done)
+	}()
+
+	// Let the capture actually start before cutting it.
+	time.Sleep(150 * time.Millisecond)
+	close(done)
+
+	select {
+	case <-finished:
+	case <-time.After(10 * time.Second):
+		t.Fatal("dumpProfiles did not return after done was closed; a disarm during a " +
+			"capture still waits out the full cpuSeconds")
+	}
+
+	if elapsed := time.Since(start); elapsed >= cpuSecs*time.Second {
+		t.Errorf("capture ran the full %ds despite done; elapsed %v", cpuSecs, elapsed)
+	}
+
+	// Non-vacuity: it must still have WRITTEN the profile it captured, not
+	// just abandoned it.
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("readdir: %v", err)
+	}
+	var sawCPU bool
+	for _, e := range entries {
+		if strings.Contains(e.Name(), "-cpu-") {
+			sawCPU = true
+			info, statErr := e.Info()
+			if statErr != nil {
+				t.Fatalf("stat %s: %v", e.Name(), statErr)
+			}
+			if info.Size() == 0 {
+				t.Errorf("%s is empty; the short capture must still flush what it collected", e.Name())
+			}
+		}
+	}
+	if !sawCPU {
+		t.Error("no cpu profile written; the capture was abandoned rather than cut short")
 	}
 }

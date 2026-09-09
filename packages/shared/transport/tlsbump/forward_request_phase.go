@@ -75,7 +75,7 @@ func (x *bumpedExchange) runRequestPhase() bool {
 			// DetectRequestMeta stays here unconditionally: provider / model /
 			// api-key class land on the audit row whether or not any hook runs.
 			// The normalize call does NOT — it is deferred to after BuildPipeline
-			// below (finding C-18), because its only consumer is
+			// below, because its only consumer is
 			// reqInput.Normalized, which nothing reads unless a pipeline executes.
 			reqMeta = resolvedAdapter.DetectRequestMeta(x.r, bodyBytes)
 		}
@@ -108,7 +108,7 @@ func (x *bumpedExchange) runRequestPhase() bool {
 		TransactionID:     x.txID,
 		ConnectionID:      bo.connectionID,
 		TraceID:           x.traceID,
-		ExternalRequestID: x.r.Header.Get("X-Request-Id"),
+		ExternalRequestID: x.txID,
 		Headers:           sanitisedHeaders,
 		RequestMeta:       reqMeta,
 		PhaseSink:         x.phaseSink,
@@ -140,7 +140,7 @@ func (x *bumpedExchange) runRequestPhase() bool {
 	// endpoint-aware hooks (e.g. embedding-specific or chat-only
 	// hooks) apply correctly. Empty string when unclassified —
 	// all hooks that SupportsEndpoint("") are included.
-	reqPipeline, pErr := bo.policyResolver.BuildPipeline(
+	reqPipeline, _, pErr := bo.policyResolver.BuildPipeline(
 		"request", "COMPLIANCE_PROXY",
 		x.endpointType, nil,
 		bo.perHookTimeout, bo.totalTimeout, bo.parallelHooks,
@@ -166,13 +166,13 @@ func (x *bumpedExchange) runRequestPhase() bool {
 			return true
 		}
 	} else if reqPipeline != nil {
-		// Normalize only now that a pipeline is known to exist (finding C-18). The
+		// Normalize only once a pipeline is known to exist. The
 		// Registry's Tier 1+2+3 chain produces a structured NormalizedPayload with
 		// role-aware Messages; when no tier claims the body, the adapter's
 		// ExtractRequest -> Segments -> PayloadFromTextSegments chain recovers
 		// hookable text for the PII pipeline. Both are pure decode work whose only
 		// consumer is reqInput.Normalized, read by the hooks this branch runs — with
-		// no hooks bound the whole result was previously computed and discarded.
+		// no hooks bound the whole result would be computed and discarded.
 		//
 		// Nothing between reqInput's construction and here reads .Normalized, and the
 		// audit row does not carry it: the emitter reads AuditInfo.RequestNormalized,
@@ -196,7 +196,7 @@ func (x *bumpedExchange) runRequestPhase() bool {
 		// upstream provider (the request-side leak this fixes).
 		// Order matters: CarriesRedaction() is checked BEFORE the folded-block refuse
 		// arm so a BlockSoft that masks a co-firing redact takes the redaction arm
-		// (redact-forward, the #13 invariant) instead of being refused.
+		// (redact-forward, the carries-redaction invariant) instead of being refused.
 		switch {
 		case result.CarriesRedaction():
 			// Hook requested inflight redact (Modify, or a BlockSoft masking a
@@ -208,7 +208,21 @@ func (x *bumpedExchange) runRequestPhase() bool {
 			// audit trail reflects the degraded path.
 			if resolvedAdapter != nil && len(result.ModifiedContent) > 0 {
 				rewriteContent := rewriteContentWithToolArgs(result.ModifiedContent, content, result.TransformSpans)
-				rewritten, _, rErr := resolvedAdapter.RewriteRequestBody(x.flow.ctx, bodyBytes, x.r.URL.Path, rewriteContent)
+				var rewritten []byte
+				var rErr error
+				if !positionalRewriteAligned(content) {
+					// The blocks came from a canonical decode, whose order is not
+					// this adapter's wire-slot order. Handing them to the positional
+					// rewriter does not merely miss a channel — measured, it wrote a
+					// redaction into the wrong slot, left a document block's SSN on the
+					// wire, and still recorded action=redact. Refusing routes to the
+					// disclosed degraded path below: the upstream sees the original
+					// body and the audit says so, instead of receiving a corrupted one
+					// under a false record.
+					rErr = traffic.ErrRewriteUnsupported
+				} else {
+					rewritten, _, rErr = resolvedAdapter.RewriteRequestBody(x.flow.ctx, bodyBytes, x.r.URL.Path, rewriteContent)
+				}
 				if rErr == nil {
 					// Fail closed when tool-call args were masked but this
 					// per-host adapter cannot put them back on its native wire

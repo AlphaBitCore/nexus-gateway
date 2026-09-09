@@ -2,14 +2,14 @@
 // per-provider AdapterSpec subpackages — HTTP client construction,
 // OpenAI-compatible SSE decoding, and error envelope parsing.
 //
-// HTTP client construction delegates to packages/shared/transport/http.
+// HTTP client construction delegates to packages/httpclient.
 // Provider adapters call NewHTTPClient/NewProbeClient at construction
 // time and reuse the returned client for the lifetime of the adapter.
 //
 // The upstream client tunables (timeout, dial timeout, idle pool size,
 // ...) are seeded from the ai-gateway config at startup via
 // [Configure]. Until Configure is called the package-level defaults
-// match the values that used to be hardcoded here.
+// apply.
 package specutil
 
 import (
@@ -17,8 +17,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/httpclient"
 	"github.com/AlphaBitCore/nexus-gateway/packages/shared/traffic"
-	nexushttp "github.com/AlphaBitCore/nexus-gateway/packages/shared/transport/http"
 )
 
 // HTTPConfig tunes the upstream client every provider adapter shares.
@@ -129,10 +129,15 @@ func (liveTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 // same budget in buildUpstreamTransport) bounds time-to-headers on both
 // stream and non-stream paths. The http.Client level has no fallback, which
 // prevents stale baked-in timeouts from masking the live value.
-var upstreamSingleton = &http.Client{
-	Transport: liveTransport{},
-	// Intentionally 0 — see comment above.
-}
+var upstreamSingleton = nexushttp.New(nexushttp.Config{
+	// The tuned transport the factory builds is deliberately discarded:
+	// liveTransport reads the hot-swappable one on every RoundTrip. What the
+	// factory still contributes is the logging and request-id layer it wraps
+	// around whatever this returns.
+	NoTimeout: true,
+	Transport: func(*http.Transport) http.RoundTripper { return liveTransport{} },
+	Caller:    "ai-gateway-upstream",
+})
 
 // probeSingleton has fixed tunables (probes must stay cheap and snappy
 // regardless of upstream policy) so it does not participate in the
@@ -166,7 +171,7 @@ func init() {
 }
 
 // buildUpstreamTransport produces a new RoundTripper for the upstream
-// singleton's swappable Transport. Delegates to shared/httpclient so
+// singleton's swappable Transport. Delegates to packages/httpclient so
 // outbound calls retain the standard logging wrapper, then wraps with
 // shared/traffic tracing so any request whose context carries a PhaseSink
 // populates upstream TTFB + upstream-total. Requests without a sink pass
