@@ -161,6 +161,51 @@
   box-shadow: none;
 }
 
+/* Hero controls row — source picker + time-window picker, wraps on narrow. */
+.heroControls {
+  display: flex;
+  gap: var(--g-space-2);
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+/* Compliance-coverage warning banner — shown when no traffic in the window
+ * was covered by compliance hooks. */
+.complianceWarning {
+  display: flex;
+  align-items: center;
+  gap: var(--g-space-3);
+  padding: var(--g-space-3) var(--g-space-4);
+  border: 1px solid color-mix(in srgb, var(--color-warning) 40%, transparent);
+  background: color-mix(in srgb, var(--color-warning) 12%, transparent);
+  border-radius: var(--g-radius-md);
+}
+
+.complianceWarningIcon {
+  flex-shrink: 0;
+  font-size: var(--g-font-size-lg);
+  color: var(--color-warning);
+  line-height: 1;
+}
+
+.complianceWarningText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.complianceWarningTitle {
+  font-weight: var(--g-font-weight-semibold);
+  color: var(--color-text);
+  font-size: var(--g-font-size-sm);
+}
+
+.complianceWarningBody {
+  color: var(--color-text-muted);
+  font-size: var(--g-font-size-xs);
+}
+
 /* ── Time window picker (Dashboard PageHeader action) ───────────────────── */
 
 .windowPicker {

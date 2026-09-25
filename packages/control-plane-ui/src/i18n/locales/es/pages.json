@@ -79,6 +79,14 @@
     "sectionLatencyHealthSubtitle": "Nuestro overhead frente al proveedor upstream — según el proveedor con más tráfico en la ventana.",
     "latencyOurOverheadP95": "Nuestro overhead P95",
     "latencyUpstreamTotalP95": "Upstream P95",
+    "latencyEndToEndP95": "Latencia total P95",
+    "source_all": "Todo",
+    "source_vk": "Claves virtuales",
+    "source_proxy": "Proxy",
+    "source_agent": "Agente",
+    "sourcePickerLabel": "Fuente de tráfico",
+    "complianceWarningTitle": "No hay hooks de cumplimiento activos",
+    "complianceWarningBody": "Ningún tráfico en el período seleccionado fue cubierto por hooks de cumplimiento. Active un hook en Cumplimiento → Hooks y políticas para inspeccionar y gobernar este tráfico.",
     "latencySlowestProvider": "Proveedor upstream más lento"
   },
   "providers": {

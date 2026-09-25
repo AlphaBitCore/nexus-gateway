@@ -3,11 +3,13 @@ import clsx from 'clsx';
 import { AnimatedNumber } from '@/components/ui';
 import { formatTokens, formatUsd } from '@/lib/format';
 import styles from './DashboardPage.module.css';
-import { WINDOW_OPTIONS, type TimeWindow } from './dashboardShared';
+import { WINDOW_OPTIONS, SOURCE_OPTIONS, type TimeWindow, type TrafficSource } from './dashboardShared';
 
 interface HeroSectionProps {
   timeWindow: TimeWindow;
   setTimeWindow: (w: TimeWindow) => void;
+  source: TrafficSource;
+  setSource: (s: TrafficSource) => void;
   animRequests: number;
   vkRequests: number;
   proxyTotalRequests: number;
@@ -21,6 +23,8 @@ interface HeroSectionProps {
 export function HeroSection({
   timeWindow,
   setTimeWindow,
+  source,
+  setSource,
   animRequests,
   vkRequests,
   proxyTotalRequests,
@@ -46,17 +50,31 @@ export function HeroSection({
           <h1 className={styles.heroTitle}>{t('pages:dashboard.title')}</h1>
           <p className={styles.heroSubtitle}>{t('pages:dashboard.heroSubtitle')}</p>
         </div>
-        <div className={styles.windowPicker}>
-          {WINDOW_OPTIONS.map((w) => (
-            <button
-              key={w}
-              type="button"
-              className={clsx(styles.windowBtn, w === timeWindow && styles.windowBtnActive)}
-              onClick={() => setTimeWindow(w)}
-            >
-              {t(`pages:dashboard.win${w}` as never)}
-            </button>
-          ))}
+        <div className={styles.heroControls}>
+          <div className={styles.windowPicker} role="group" aria-label={t('pages:dashboard.sourcePickerLabel', 'Traffic source')}>
+            {SOURCE_OPTIONS.map((s) => (
+              <button
+                key={s}
+                type="button"
+                className={clsx(styles.windowBtn, s === source && styles.windowBtnActive)}
+                onClick={() => setSource(s)}
+              >
+                {t(`pages:dashboard.source_${s}` as never)}
+              </button>
+            ))}
+          </div>
+          <div className={styles.windowPicker}>
+            {WINDOW_OPTIONS.map((w) => (
+              <button
+                key={w}
+                type="button"
+                className={clsx(styles.windowBtn, w === timeWindow && styles.windowBtnActive)}
+                onClick={() => setTimeWindow(w)}
+              >
+                {t(`pages:dashboard.win${w}` as never)}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
       <div className={styles.heroStats}>

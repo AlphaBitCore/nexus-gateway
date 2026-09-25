@@ -79,6 +79,14 @@
     "sectionLatencyHealthSubtitle": "对比我方开销与上游提供商耗时 — 取该时间窗口内流量最大的提供商。",
     "latencyOurOverheadP95": "我方开销 P95",
     "latencyUpstreamTotalP95": "上游 P95",
+    "latencyEndToEndP95": "端到端 P95",
+    "source_all": "全部",
+    "source_vk": "虚拟密钥",
+    "source_proxy": "代理",
+    "source_agent": "代理端",
+    "sourcePickerLabel": "流量来源",
+    "complianceWarningTitle": "未启用合规钩子",
+    "complianceWarningBody": "所选时间窗口内没有流量经过合规钩子处理。请在“合规 → 钩子与策略”中启用钩子，以检查和治理此流量。",
     "latencySlowestProvider": "最慢的上游提供商"
   },
   "providers": {

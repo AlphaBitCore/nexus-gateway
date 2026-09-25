@@ -10,7 +10,7 @@ import { analyticsApi, providerApi } from '@/api/services';
 import type { CacheROISummary } from '@/api/services/overview/analytics';
 import { proxyApi } from '../../api/services/infrastructure/misc/proxy';
 import styles from './DashboardPage.module.css';
-import { WINDOW_MS, type TimeWindow } from './dashboardShared';
+import { WINDOW_MS, type TimeWindow, type TrafficSource, sourceToRollupParam, sourceToLatencyParam } from './dashboardShared';
 import { HeroSection } from './HeroSection';
 import { HealthCards } from './HealthCards';
 import { LatencyHealth } from './LatencyHealth';
@@ -26,6 +26,7 @@ export function DashboardPage() {
   /* ── Time window state ──────────────────────────────────────────────── */
 
   const [timeWindow, setTimeWindow] = useState<TimeWindow>('30d');
+  const [source, setSource] = useState<TrafficSource>('all');
 
   const { startTime, endTime } = useMemo(() => {
     const end = new Date();
@@ -33,15 +34,22 @@ export function DashboardPage() {
     return { startTime: start.toISOString(), endTime: end.toISOString() };
   }, [timeWindow]);
 
+  // The source selector maps to two different backend vocabularies: the
+  // rollup endpoints (summary, by-provider) take vk|proxy|agent; latency-phases
+  // takes ai-gateway|compliance-proxy|agent. Sparkline/cacheROI have no source
+  // dimension, so trend charts stay cross-source (noted in the UI copy).
+  const rollupSourceParam = sourceToRollupParam(source);
+  const latencySource = sourceToLatencyParam(source);
+
   /* ── Data fetching ──────────────────────────────────────────────────── */
 
   const { data: summary, loading, error, refetch } = useApi<AnalyticsSummary>(
-    () => analyticsApi.summary({ startTime, endTime }),
-    ['admin', 'analytics', 'summary', timeWindow],
+    () => analyticsApi.summary({ startTime, endTime, ...rollupSourceParam }),
+    ['admin', 'analytics', 'summary', timeWindow, source],
   );
   const { data: providers } = useApi<{ data: ProviderBreakdown[] }>(
-    () => analyticsApi.byProvider({ startTime, endTime }),
-    ['admin', 'analytics', 'by-provider', timeWindow],
+    () => analyticsApi.byProvider({ startTime, endTime, ...rollupSourceParam }),
+    ['admin', 'analytics', 'by-provider', timeWindow, source],
   );
   const { data: providerList } = useApi<{ data: Provider[] }>(
     () => providerApi.list({ ...ADMIN_LIST_FULL_PAGE_PARAMS }),
@@ -60,8 +68,8 @@ export function DashboardPage() {
   // Aggregating by `provider` lets us surface the slowest provider in a
   // standalone callout without a second round-trip.
   const { data: latencyPhases } = useApi(
-    () => analyticsApi.latencyPhases({ groupBy: 'provider', start: startTime, end: endTime }),
-    ['admin', 'analytics', 'latency-phases', 'dashboard', timeWindow],
+    () => analyticsApi.latencyPhases({ groupBy: 'provider', start: startTime, end: endTime, source: latencySource }),
+    ['admin', 'analytics', 'latency-phases', 'dashboard', timeWindow, source],
   );
 
   /* ── Compliance Proxy ───────────────────────────────────────────────── */
@@ -173,6 +181,11 @@ export function DashboardPage() {
 
   const windowLabel = t(`pages:dashboard.win${timeWindow}` as never);
 
+  // Surface a warning when the proxy is reachable but nothing in the window
+  // was covered by compliance hooks — a 0% figure otherwise reads as a metric,
+  // not the governance gap it actually is.
+  const showComplianceWarning = proxyReachable === true && proxyTotalRequests > 0 && proxyCoveragePercent === 0;
+
   /* ── Render ─────────────────────────────────────────────────────────── */
 
   return (
@@ -180,6 +193,8 @@ export function DashboardPage() {
       <HeroSection
         timeWindow={timeWindow}
         setTimeWindow={setTimeWindow}
+        source={source}
+        setSource={setSource}
         animRequests={animRequests}
         vkRequests={vkRequests}
         proxyTotalRequests={proxyTotalRequests}
@@ -189,6 +204,16 @@ export function DashboardPage() {
         proxyCoveragePercent={proxyCoveragePercent}
         windowLabel={windowLabel}
       />
+
+      {showComplianceWarning && (
+        <div className={styles.complianceWarning} role="alert">
+          <span className={styles.complianceWarningIcon} aria-hidden="true">⚠</span>
+          <span className={styles.complianceWarningText}>
+            <span className={styles.complianceWarningTitle}>{t('pages:dashboard.complianceWarningTitle')}</span>
+            <span className={styles.complianceWarningBody}>{t('pages:dashboard.complianceWarningBody')}</span>
+          </span>
+        </div>
+      )}
 
       <HealthCards
         sparkData={sparkData}
