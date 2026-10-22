@@ -141,7 +141,7 @@ jobs:
         if: matrix.config == 'baseline'
         run: scripts/release/build-tarball.sh --version "$VERSION"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: matrix.config == 'baseline'
         with:
           name: tarball-${{ matrix.arch }}
